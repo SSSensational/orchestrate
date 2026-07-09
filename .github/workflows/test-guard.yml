@@ -1,0 +1,54 @@
+name: test-guard
+# 测试所有权分离（constitution 第 4 条）：
+# 1) 修改/删除既有测试必须由人打 approved-test-change label；
+# 2) acceptance/**（验收测试）只能经"纯测试 PR"进入——实现 PR 不得夹带新增验收测试，
+#    防止 builder 给自己的 issue 塞一条好过的验收用例。
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+jobs:
+  guard:
+    name: test-guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const base = context.payload.pull_request.base.sha;
+            const head = context.payload.pull_request.head.sha;
+            execSync(`git fetch --no-tags origin ${base} ${head}`, { stdio: 'inherit' });
+            const diff = execSync(`git diff --name-status ${base}...${head}`).toString().trim();
+            const entries = diff.split('\n').filter(Boolean).map(l => l.split('\t'));
+            const testPattern = /(^|\/)(tests?|__tests__|e2e|acceptance)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+
+            const hasHumanLabel = async () => {
+              const { data: events } = await github.rest.issues.listEvents({
+                ...context.repo, issue_number: context.payload.pull_request.number, per_page: 100,
+              });
+              return events.some(e =>
+                e.event === 'labeled' && e.label?.name === 'approved-test-change' && e.actor?.type === 'User');
+            };
+
+            // 规则 1：既有测试被修改/删除/重命名 → 需人工豁免
+            const touched = entries.filter(([s, f]) =>
+              (s.startsWith('M') || s.startsWith('D') || s.startsWith('R')) && testPattern.test(f));
+            // 规则 2：实现 PR 夹带新增验收测试 → 需人工豁免（纯测试 PR 除外）
+            const addedAcceptance = entries.filter(([s, f]) => s.startsWith('A') && f.startsWith('acceptance/'));
+            const nonAcceptance = entries.filter(([, f]) => f && !f.startsWith('acceptance/'));
+            const mixedAcceptance = addedAcceptance.length > 0 && nonAcceptance.length > 0;
+
+            if (touched.length === 0 && !mixedAcceptance) { core.info('测试所有权检查通过'); return; }
+            if (await hasHumanLabel()) { core.info('已获人工豁免（approved-test-change）'); return; }
+            const reasons = [];
+            if (touched.length) reasons.push(`既有测试被修改/删除：\n${touched.map(t => t[1]).join('\n')}`);
+            if (mixedAcceptance) reasons.push(
+              `实现 PR 夹带新增验收测试（acceptance/** 只能经纯测试 PR 进入）：\n${addedAcceptance.map(t => t[1]).join('\n')}`);
+            core.setFailed(reasons.join('\n\n') + '\n\n如确有必要，请人工打 approved-test-change label。');

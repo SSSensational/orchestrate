@@ -1,0 +1,7 @@
+# 门禁与 spec 层的变更必须经人审（docs/ai-native-build.md §6）。
+# SSSensational 由 scripts/bootstrap-github.sh 在 gh 登录后替换为真实用户名。
+/openspec/          @SSSensational
+/docs/              @SSSensational
+/.github/           @SSSensational
+/AGENTS.md          @SSSensational
+/CLAUDE.md          @SSSensational

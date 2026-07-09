@@ -1,0 +1,30 @@
+name: Feature / Task
+description: 新功能或任务（人工布置的工作单元）
+labels: ["type:feature", "origin:human"]
+body:
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景与目标
+      description: 要解决什么问题、为什么现在做
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收判据
+      description: 每条必须可由 CI / 测试 / 可观察行为证实——这是奖励函数的人读版本
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: 明确不做什么，防止范围蔓延
+  - type: input
+    id: related
+    attributes:
+      label: 关联 change / spec / issue

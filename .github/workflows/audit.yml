@@ -1,0 +1,48 @@
+name: audit
+# 每日审计：1) 重开"无合并 PR 却被非人类关闭"的 issue（constitution 第 5 条）；2) needs-human 队列摘要。
+on:
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const since = new Date(Date.now() - 26 * 3600 * 1000).toISOString().slice(0, 10);
+            const q = `repo:${context.repo.owner}/${context.repo.repo} is:issue is:closed closed:>=${since}`;
+            const { data: res } = await github.rest.search.issuesAndPullRequests({ q, per_page: 50 });
+            for (const issue of res.items) {
+              if (issue.pull_request) continue;
+              const gql = await github.graphql(`query($o:String!,$r:String!,$n:Int!){
+                repository(owner:$o,name:$r){ issue(number:$n){
+                  closedByPullRequestsReferences(first:5, includeClosedPrs:true){ nodes{ merged } }
+                  timelineItems(last:1, itemTypes:[CLOSED_EVENT]){ nodes{ ... on ClosedEvent { actor{ login __typename } } } }
+                }}}`, { o: context.repo.owner, r: context.repo.repo, n: issue.number });
+              const node = gql.repository.issue;
+              const mergedPr = node.closedByPullRequestsReferences.nodes.some(p => p.merged);
+              const closer = node.timelineItems.nodes[0]?.actor;
+              const humanClosed = closer && closer.__typename === 'User';
+              if (!mergedPr && !humanClosed) {
+                await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: 'open' });
+                await github.rest.issues.createComment({
+                  ...context.repo, issue_number: issue.number,
+                  body: 'audit：本 issue 在无合并 PR 的情况下被非人类关闭，已重开（constitution 第 5 条：issue 只能被合并的 PR 或人关闭）。',
+                });
+              }
+            }
+            const { data: nh } = await github.rest.issues.listForRepo({
+              ...context.repo, labels: 'needs-human', state: 'open', per_page: 100,
+            });
+            if (nh.length) {
+              await core.summary.addHeading('needs-human 队列')
+                .addList(nh.map(i => `#${i.number} ${i.title}`)).write();
+            } else {
+              await core.summary.addRaw('needs-human 队列为空').write();
+            }

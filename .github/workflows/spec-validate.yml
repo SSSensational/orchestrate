@@ -1,0 +1,16 @@
+name: spec-validate
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  validate:
+    name: spec-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 结构与 delta 合法性的确定性校验（ai-native-build.md §6）
+      - run: npx -y @fission-ai/openspec@latest validate --all --strict

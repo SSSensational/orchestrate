@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+// 用法：node scripts/dispatch.mjs <issue#> [claude|codex|opencode]
+//
+// 本地认领一个 issue，用指定 builder 在隔离 worktree（分支 issue/<n>）实现；开 PR 前先过
+// 本地确定性检查（required checks 的本地镜像），红则把失败输出截尾回喂 builder 续跑，
+// 次数封顶（决策 D10）。停机条件是确定性的：检查全绿，或次数用尽（→ 自动执行卡住协议）。
+// 循环的是确定性信号，不让 LLM 自评「完成」（宪法第 10 条）。
+// 全程你在终端可见——纯本地 CLI 通道，无云、无密钥。
+// builder 由 issue 的 label `agent:build:<x>` 指定，或用第二参数临时覆盖（任意 CLI，非固定）。
+import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync, existsSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { ADAPTERS, AGENTS, agentFromLabels, resolve, runLive, gh } from './agents.mjs';
+
+const [num, override] = process.argv.slice(2);
+if (!num) {
+  console.error('用法：node scripts/dispatch.mjs <issue#> [claude|codex|opencode]');
+  process.exit(1);
+}
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.DISPATCH_MAX_ATTEMPTS || 3));
+
+// 1) 读 issue（标题 / 正文=验收判据 / labels）
+const issue = JSON.parse(gh(['issue', 'view', num, '--json', 'title,body,labels,number']));
+const labels = issue.labels.map((l) => l.name);
+const agent = override || agentFromLabels(labels, 'build');
+if (!agent) {
+  console.error(`issue #${num} 未指定 builder。请打 label agent:build:<${AGENTS.join('|')}>，或传第二参数。`);
+  process.exit(1);
+}
+if (!ADAPTERS[agent]) { console.error(`未知 agent「${agent}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
+
+// 2) 建隔离 worktree（分支 issue/<n>，基于 origin/main——本地 main 可能过期/被重写）
+// 认领防撞：一个 issue 同时只一个 builder
+const dir = `../${basename(process.cwd())}-issue-${num}`;
+if (!existsSync(dir)) {
+  execFileSync('git', ['fetch', '--quiet', 'origin', 'main']);
+  const branchExists = spawnSync('git', ['rev-parse', '--verify', `issue/${num}`]).status === 0;
+  const args = branchExists
+    ? ['worktree', 'add', dir, `issue/${num}`]
+    : ['worktree', 'add', dir, '-b', `issue/${num}`, 'origin/main'];
+  execFileSync('git', args, { stdio: 'inherit' });
+} else {
+  console.log(`worktree 已存在：${dir}（续用）`);
+}
+
+// 3) 纪律块（初始与续跑 prompt 共用；agent 中立：任一 CLI 读同一份）
+const DISCIPLINE = [
+  '--- 纪律（详见仓库根 AGENTS.md）---',
+  '- 一次只做这一个 issue，只改必要范围；不顺手重构、不修范围外问题。',
+  '- 禁止占位符 / stub；改行为必须同步对应 openspec spec。',
+  '- 禁止创建 / 修改 / 删除 acceptance/**（验收测试由 test-writer 拥有，test-guard 强制）。',
+  '- 在本 worktree 内实现 + 自测 + git commit（分支已建好；PR 由本脚本创建，你不要自己开 PR）。',
+  '- 卡住同一错误两次：在 issue 评论记录卡点、打 needs-human label、停手。',
+].join('\n');
+
+// 本地确定性检查 = required checks 的本地镜像（ci 的 typecheck / lint / test 子集）。
+// 脚手架未落地（无 package.json 或无对应 script）时跳过——远端 required checks 仍兜底。
+function localChecks(cwd) {
+  const pkg = join(cwd, 'package.json');
+  if (!existsSync(pkg)) return { ok: true, skipped: true };
+  let scripts = {};
+  try { scripts = JSON.parse(readFileSync(pkg, 'utf8')).scripts || {}; } catch { return { ok: true, skipped: true }; }
+  const names = ['typecheck', 'lint', 'test'].filter((n) => scripts[n]);
+  if (names.length === 0) return { ok: true, skipped: true };
+  for (const name of names) {
+    const r = spawnSync('pnpm', ['-s', 'run', name], { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+    if ((r.status ?? 1) !== 0) {
+      console.error(`✗ 本地检查未过：pnpm run ${name}`);
+      return { ok: false, failed: name, log: `$ pnpm run ${name}\n${r.stdout || ''}\n${r.stderr || ''}`.trim() };
+    }
+    console.log(`✓ 本地检查：pnpm run ${name}`);
+  }
+  return { ok: true, skipped: false, checked: names };
+}
+
+const tail = (s, n) => s.split('\n').slice(-n).join('\n');
+
+// 4) 重试环：builder 会话 → 本地确定性检查 → 红则失败截尾回喂续跑（≤ MAX_ATTEMPTS）。
+// 成败不以 builder 退出码判定（opencode 退出码 0 也可能失败，见 PRD §3.2）；
+// 退出码非 0 按基础设施故障处理（CLI 未装 / 未登录 / 崩溃），立即停手交人，不计入重试。
+let prompt = [
+  `完成 GitHub issue #${num}：${issue.title}`,
+  '',
+  issue.body || '',
+  '',
+  DISCIPLINE,
+].join('\n');
+let checks = { ok: true, skipped: true };
+for (let attempt = 1; ; attempt++) {
+  console.log(`\n== builder：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}  ·  尝试 ${attempt}/${MAX_ATTEMPTS}\n`);
+  const code = runLive(resolve(agent, 'build', prompt), dir);
+  if (code !== 0) { console.error(`\nbuilder 退出码 ${code}（按基础设施故障处理）——检查上面输出；未开 PR。`); process.exit(code); }
+  checks = localChecks(dir);
+  if (checks.ok) break;
+  if (attempt >= MAX_ATTEMPTS) {
+    // 卡住协议的机器执行版（AGENTS.md 纪律 6）：记录卡点、打 needs-human、停手，不开 PR
+    const body = [
+      `**dispatch 卡住**：${MAX_ATTEMPTS} 次尝试后本地确定性检查仍未过（builder=${agent}）。`,
+      '',
+      `最后一次失败（\`pnpm run ${checks.failed}\`，截尾）：`,
+      '',
+      '```',
+      tail(checks.log, 60),
+      '```',
+      '',
+      `worktree 保留在本地 \`${dir}\`（分支 \`issue/${num}\`），可人工接手，或换 builder 重跑 dispatch（续用同一 worktree）。`,
+    ].join('\n');
+    try {
+      gh(['issue', 'comment', num, '--body', body]);
+      gh(['issue', 'edit', num, '--add-label', 'needs-human']);
+    } catch (e) { console.error(`（gh 留痕失败：${e.message}）`); }
+    console.error(`\n${MAX_ATTEMPTS} 次尝试后检查仍未过——已在 issue 记录卡点并打 needs-human；未开 PR。`);
+    process.exit(1);
+  }
+  console.log(`\n== 检查未过（pnpm run ${checks.failed}）——失败输出截尾回喂 builder 续跑\n`);
+  prompt = [
+    `继续 GitHub issue #${num}：${issue.title}`,
+    '',
+    `本 worktree 已有一版实现，但本地确定性检查未过（pnpm run ${checks.failed}）。`,
+    '只修检查暴露的问题，不扩大范围；修完自己重跑该检查确认后再收尾。',
+    '',
+    '--- 检查失败输出（截尾）---',
+    tail(checks.log, 120),
+    '',
+    DISCIPLINE,
+  ].join('\n');
+}
+
+// 5) 兜底提交（agent 若留了未提交改动，替它 commit，避免空 PR）
+const dirty = spawnSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }).stdout.trim();
+if (dirty) {
+  execFileSync('git', ['-C', dir, 'add', '-A']);
+  execFileSync('git', ['-C', dir, 'commit', '-m', `issue #${num}: ${issue.title}`], { stdio: 'inherit' });
+}
+
+// 6) 推分支 + 开 PR（已有 open PR 则复用——续修 / 崩溃恢复时推送即更新）
+execFileSync('git', ['-C', dir, 'push', '-u', 'origin', `issue/${num}`], { stdio: 'inherit' });
+const existing = JSON.parse(gh(['pr', 'list', '--head', `issue/${num}`, '--state', 'open',
+  '--json', 'url', '--limit', '1']));
+let url;
+if (existing.length) {
+  url = existing[0].url;
+  console.log(`\nPR 已存在（推送即更新）：${url}`);
+} else {
+  const checksLine = checks.skipped
+    ? 'Local-checks: skipped（脚手架未落地，无 package.json scripts；由远端 required checks 兜底）'
+    : `Local-checks: green（${checks.checked.join(' / ')}）`;
+  const body = [
+    `Closes #${num}`,
+    '',
+    `Built-by: ${agent} (${ADAPTERS[agent].displayName} · 本地 CLI 通道)`,
+    checksLine,
+    '',
+    '> 由 scripts/dispatch.mjs 开出。评审：`node scripts/review.mjs <本 PR#>`。',
+    '> 合并前须 ci + spec-validate + test-guard 全绿；LLM 评审为顾问意见；人终审。',
+  ].join('\n');
+  url = gh(['pr', 'create', '--head', `issue/${num}`, '--title', issue.title, '--body', body], { cwd: dir }).trim();
+  console.log(`\nPR 已创建：${url}`);
+}
+console.log(`下一步：node scripts/review.mjs ${url.split('/').pop()}  [reviewer]`);

@@ -1,0 +1,15 @@
+name: Question
+description: 需要人工答复的提问（agent 或人皆可用）
+labels: ["type:question", "needs-human"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 问题
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 上下文
+      description: 这个问题阻塞了哪个 issue / PR / change

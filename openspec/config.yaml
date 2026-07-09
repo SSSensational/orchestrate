@@ -1,0 +1,29 @@
+schema: spec-driven
+
+# 项目上下文：创建 artifact 时展示给 AI。
+context: |
+  项目：Agent Workflow Runtime（蓝图见 docs/PRD.md）。
+  技术栈：Node.js 22 + TypeScript (strict)、Hono、better-sqlite3、
+  Vite + React + @xyflow/react、vitest + Playwright、pnpm。
+
+  本仓库采用本地 CLI 通道的 AI-native 工作流（见 docs/ai-native-build.md），
+  不可违反原则见 docs/constitution.md。与 OpenSpec 默认工作流的差异：
+  - openspec/specs/ 是 living specs，只描述"已建成的现状"；在途意图放 openspec/changes/。
+  - 工作单元是 GitHub Issue：change 的 tasks 会被播种成 Issues，此后
+    Issue 是唯一活状态，tasks.md 仅作初始拆解快照，不再维护。
+  - 实现由本地 CLI builder 完成（node scripts/dispatch.mjs <issue#>：issue 进 → PR 出）；
+    change 关联 issue 全关后由 spec-archive workflow 开归档任务 issue（人本地跑
+    /opsx:archive 或 dispatch 执行）。不使用 /opsx:apply。
+
+rules:
+  proposal:
+    - 必须包含"验收判据"节（每条可由 CI / 测试 / 可观察行为证实）
+    - 必须包含"Non-goals"节
+  tasks:
+    - 每条 task 必须是一次本地 dispatch run 可独立完成、可独立开 PR 的单元（约半天工作量）
+    - 每条 task 自带可测验收判据（将被原样播种进对应 GitHub Issue）
+  design:
+    - 涉及跨 capability 的决策必须引用相关 living spec（openspec/specs/<capability>/spec.md）
+  specs:
+    - 每个 requirement 必须带 GIVEN/WHEN/THEN scenario，且 scenario 可直接派生自动化测试
+      （它是 test-writer 写 acceptance 测试的唯一依据）

@@ -1,0 +1,28 @@
+name: AI 发现
+description: agent 在工作中发现的范围外问题（由 agent 提交）
+labels: ["origin:ai"]
+body:
+  - type: input
+    id: source
+    attributes:
+      label: 发现来源
+      description: 关联的 run / issue / PR 链接
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 描述
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建议处理
+  - type: checkboxes
+    id: dedupe
+    attributes:
+      label: 去重声明
+      options:
+        - label: 已搜索既有 issue，确认无重复
+          required: true

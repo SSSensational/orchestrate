@@ -1,0 +1,40 @@
+name: spec-archive
+# change 关联 issue（label: change:<name>）全部关闭 → 开归档任务 issue。
+# 归档 = 把 delta 归并进 living specs，以 PR 提交（CODEOWNERS 人审）。
+# 打 to:claude 交给备用 builder 执行；也可人工本地跑 /opsx:archive 后开 PR。
+on:
+  issues:
+    types: [closed]
+jobs:
+  check:
+    name: spec-archive
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = (context.payload.issue.labels || []).map(l => l.name);
+            const change = labels.find(l => l.startsWith('change:'));
+            if (!change) return;
+            const name = change.slice('change:'.length);
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo, labels: change, state: 'open', per_page: 1,
+            });
+            if (open.length > 0) return;
+            const title = `归档 change: ${name}`;
+            const { data: existing } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`,
+            });
+            if (existing.total_count > 0) return;
+            await github.rest.issues.create({
+              ...context.repo, title, labels: ['origin:ai', 'needs-human'],
+              body: [
+                `change \`${name}\` 关联的全部 issue 已关闭。`,
+                '',
+                `请执行 openspec 归档：把 \`openspec/changes/${name}/\` 的 spec delta 归并进`,
+                '`openspec/specs/`（living specs），change 文件夹移入 `openspec/changes/archive/`，',
+                '以 PR 提交（走 CODEOWNERS 人审）。流程见 AGENTS.md「Spec 层」。',
+              ].join('\n'),
+            });

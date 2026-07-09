@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(.github/**)",
+      "Write(.github/**)",
+      "Edit(docs/**)",
+      "Write(docs/**)"
+    ]
+  }
+}
