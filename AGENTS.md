@@ -28,8 +28,8 @@
 ## 角色与 agent 选择（本地通道）
 
 - 执行者是本机 CLI（Claude Code / Codex / OpenCode），经 `gh` 留痕；**无云 agent、无 CI 内跑模型**（决策 D9）。
-- 每个 issue 用 label 选人（可不同、非固定）：`agent:build:<claude|codex|opencode>`（谁实现）+ `agent:review:<...>`（谁做顾问评审，建议异于 builder）。
-- 触发：常驻 `node scripts/watch.mjs` 是全链入口（issue 打 `ready` → 自动提案 / 播种 / 派发 / 顾问评审，人只审提案与终审 merge，见决策 D12）。底层脚本可单独手动跑（调试 / 接管）：`dispatch.mjs <issue#>`（builder → 本地确定性检查回喂环 ≤3 次 → 开 PR；仍不绿自动记卡点 + needs-human，D10）、`review.mjs <PR#>`（reviewer 在 PR head 的临时只读 worktree 里评审 → 发顾问评论）。适配器表见 `scripts/agents.mjs`。
+- 每个 issue 用 label 选人（可不同、非固定）：`agent:build:<claude|codex|opencode>`（谁实现）+ `agent:review:<...>`（谁做顾问评审）。缺省 builder = codex；未指定 reviewer 时自动选择异于 builder 的 agent。
+- 触发：常驻 `node scripts/watch.mjs` 是全链入口（issue 打 `ready` → 自动提案 / 播种 / 派发 / 顾问评审，首次 `VERDICT: CHANGES` 自动回喂原 builder 复修一次并复审一次；人只审提案与终审 merge，见决策 D12）。底层脚本可单独手动跑（调试 / 接管）：`dispatch.mjs <issue#>`（builder → 本地确定性检查回喂环 ≤3 次 → 开 PR；仍不绿自动记卡点 + needs-human，D10）、`review.mjs <PR#>`（reviewer 在 PR head 的临时只读 worktree 里评审 → 发顾问评论）。自动化必须设置 `AGENT_GH_TOKEN`，缺失时 fail-closed，不回落人的 `gh` 身份。适配器表见 `scripts/agents.mjs`。
 
 ## 工作纪律
 
@@ -39,7 +39,8 @@
 4. **范围外发现**（bug、坏依赖、spec 矛盾）：搜索去重后开 `origin:ai` issue 并链接当前工作，然后回到本职。
 5. **提问**：在当前 issue 评论并打 `needs-human` label，或开 `type:question` issue。不要猜测需求。
 6. **卡住协议**：同一错误两次未解 → 在 issue 评论记录现状与卡点，打 `needs-human`，PR 留 draft，结束本次 run。
-7. **禁止**：修改/删除既有测试（新增可以）；修改 `docs/**`、`.github/**`；关闭 issue（只能由合并的 PR 自动关闭）；**运行 `scripts/watch.mjs`（watch 是全机单实例的常驻编排进程，只由人启动——agent 永远不得自行拉起）**。openspec/** 可在 PR 中改（同步 spec 是义务），但必经 CODEOWNERS 人审。
+7. **受保护文件**：agent 仅当当前 issue 明确将 `docs/**`、`.github/**` 列入范围时可起草；只能在 issue 分支提交并走 PR，必须经 CODEOWNERS 人审。agent 永远不得直接 push 受保护分支或 merge。openspec/** 可在 PR 中改（同步 spec 是义务），也必经 CODEOWNERS 人审。
+8. **禁止**：修改/删除既有测试（新增可以）；关闭 issue（只能由合并的 PR 自动关闭）；**运行 `scripts/watch.mjs`（watch 是全机单实例的常驻编排进程，只由人启动——agent 永远不得自行拉起）**。
 
 ## Definition of Done
 

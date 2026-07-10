@@ -1,6 +1,6 @@
 # AI-Native 实施手册：本地 CLI 通道把项目造出来
 
-配套 `PRD.md`（规定"造什么"）。本手册规定"怎么造"：**人只写 spec、验收判据、门禁**；实现由本机 coding CLI（Claude Code / Codex / OpenCode）完成、经 `gh` 在 GitHub 留痕，每个 issue 可动态指定谁 build、谁 review。全部过程状态（需求、提问、发现、演变）落在公开 GitHub 对象上，任何人可随时重建项目史。
+配套 `PRD.md`（规定"造什么"）。本手册规定"怎么造"：**人掌控 spec、验收判据、门禁与最终 merge**；实现与获得 issue 明确授权的文档起草由本机 coding CLI（Claude Code / Codex / OpenCode）完成、经 `gh` 在 GitHub 留痕，每个 issue 可动态指定谁 build、谁 review。全部过程状态（需求、提问、发现、演变）落在公开 GitHub 对象上，任何人可随时重建项目史。
 
 ## 1. 五条公理（第一性原理）
 
@@ -25,6 +25,10 @@
     → 本地确定性检查（typecheck/lint/test，required checks 的本地镜像）
         红 → 失败截尾回喂续跑（≤3 次，确定性停机）；仍红 → issue 记卡点 + needs-human，不开 PR
         绿 → 开 PR（Closes #n + Built-by + Local-checks 留痕）→ 自动 review.mjs 顾问评审（非门禁）
+          PASS → 等人终审
+          首次 CHANGES → 回喂原 builder 复修一次 → 复审一次
+            复审 PASS → 等人终审
+            复修/复审失败或复审仍 CHANGES → 停止自动循环，交人
         ↓
 required checks（确定性奖励函数）= ci + spec-validate + test-guard
         ↓
@@ -33,7 +37,7 @@ required checks（确定性奖励函数）= ci + spec-validate + test-guard
 
 **换 builder/reviewer = 换 label**：prompt 是 agent 中立的（issue 正文 + AGENTS.md）、状态全在 GitHub、门禁全是确定性检查（对 builder 是谁无感）。适配器表 `scripts/agents.mjs` 加一条三元组即接入一家新 CLI——这套管线正是产品要造的东西的退化形态。
 
-**循环层**：重试环只循环**确定性信号**（本地检查红/绿），停机条件 = 全绿或次数用尽——不让 LLM 自评「完成」（宪法第 10 条），不做无界无人值守循环（被验收测试与人终审封顶）。
+**循环层**：dispatch 重试环只循环**确定性信号**（本地检查红/绿），停机条件 = 全绿或次数用尽（默认最多 3 次）。顾问层是另一个有界闭环：仅首次 `CHANGES` 触发一轮复修/复审，失败或二次 `CHANGES` 交人。顾问仍非 required gate，不让 LLM 自评「完成」（宪法第 10 条），不做无界无人值守循环。
 
 ## 3. 仓库脚手架
 
@@ -42,7 +46,7 @@ project-root/
 ├── openspec/                 # OpenSpec：config.yaml + specs/<capability>/ + changes/<change>/
 ├── docs/                     # PRD / ai-native-build（本文）/ constitution / operations / decisions
 ├── AGENTS.md · CLAUDE.md · README.md   # 根目录发现约定（CODEOWNERS 保护 AGENTS/CLAUDE）
-├── .claude/settings.json · .codex/     # 薄 hooks：deny 改 docs/** .github/**（纵深防御）
+├── .claude/settings.json · .codex/     # 本地配置；不 deny 已获 issue 授权的受保护文件起草
 ├── scripts/
 │   ├── agents.mjs            # 适配器表（本地 CLI × build/review）——产品 AgentAdapter registry 退化版
 │   ├── watch.mjs             # 常驻全链入口：ready → 提案/播种/派发/自动评审（D12）
@@ -77,7 +81,7 @@ project-root/
 
 ## 5. 常驻 / 按需装置
 
-- **watch**（本地常驻单进程，全链入口，D12）：轮询 ready issue → 自动提案 / 播种 / 派发（D10 重试环）/ PR 顾问评审；人只审提案与终审 merge。**只由人启动（agent 禁止拉起）**；全机单实例（PID 锁）；认领 = `ready → wip`，崩溃遗留的 wip 下次启动自动还原为 ready。
+- **watch**（本地常驻单进程，全链入口，D12）：轮询 ready issue → 自动提案 / 播种 / 派发（D10 重试环）/ PR 顾问评审；首次 `CHANGES` 自动回喂原 builder 复修一次并复审一次，失败或二次 `CHANGES` 交人；人只审提案与终审 merge。未指定时 builder 缺省 codex，reviewer 自动选择异于 builder 的 agent。启动前必须有 `AGENT_GH_TOKEN`，缺失即 fail-closed。**只由人启动（agent 禁止拉起）**；全机单实例（PID 锁）；认领 = `ready → wip`，崩溃遗留的 wip 下次启动自动还原为 ready。
 - **audit**（workflow，确定性，唯一云端常驻自动化）：issue 关闭合法性、`needs-human` 队列播报。
 - **triage**（人）：新需求 = 开 issue + 打 ready（watch 自动起草提案）；也可本地会话手动 `/opsx:propose` 先探索。人审提案 = 审定奖励函数。
 - **gap-analysis / 学习环**（本地按需）：定期让本地会话对照 living specs 与代码找漂移 → 开 issue 归队；有摩擦的 PR 合并后提炼教训 → AGENTS.md（人审）。轻量、按需、零常驻成本。
@@ -88,8 +92,8 @@ project-root/
 - **CODEOWNERS**：`openspec/**`、`docs/**`（含本文与 PRD）、`.github/**`、`AGENTS.md`、`CLAUDE.md` 变更必须人审。
 - **test-guard**：动既有测试 / 实现 PR 夹带新增验收测试 → 红，除非人打 `approved-test-change`。
 - **验收测试是奖励函数的核心**：由 test-writer（可指定任一 CLI、只读判据不看实现）从判据 + spec 的 GIVEN/WHEN/THEN scenarios 派生，test-guard 锁住 builder 不能改，CI 里转绿才算过——确定性、厂商中立、不可篡改。
-- **顾问评审（review.mjs）**：异 CLI 只读第二意见，发 PR 评论；**非门禁、不阻塞合并**。reviewer 在 PR head 的临时 detached worktree 里跑（硬隔离只读）；diff / 判据落文件传路径；对抗式双视角竞争评审。
-- **repo 内薄 hooks**：deny 改 docs/** 与 .github/**（纵深防御，非主强制层）。
+- **顾问评审（review.mjs）**：异 CLI 只读第二意见，发 PR 评论；首次 `CHANGES` 可触发最多一轮原 builder 复修/复审，**仍非门禁、不阻塞合并**。reviewer 在 PR head 的临时 detached worktree 里跑（硬隔离只读）；diff / 判据落文件传路径；对抗式双视角竞争评审。
+- **受保护文件起草**：本地 hooks 不笼统 deny `docs/**` 与 `.github/**`；agent 仅在 issue 明确列入范围时可在 issue 分支起草。硬边界是 branch protection + CODEOWNERS + required checks + 人终审；agent 永远不得直接 push 受保护分支或 merge。
 
 ## 7. 与 PRD Phase 对齐
 
@@ -122,12 +126,13 @@ project-root/
 
 ## 9. Day-0 Runbook
 
-1. `gh auth login` → `./scripts/bootstrap-github.sh`（建公开 repo + labels + milestones + branch protection，零 Secret）。
-2. 本机装好并登录 `claude` / `codex` / `opencode`。
-3. 实测门禁：试 merge 未过 check 的 PR、试让 agent 改 `openspec/`，都应被拒。
-4. 起 `node scripts/watch.mjs` → 开首个需求 issue 并打 `ready` → watch 自动起草提案 PR。
-5. **人逐条审定提案里的验收判据**（这是奖励函数，值得花一小时）→ merge → watch 自动播种、派发、顾问评审 → 人 merge 实现 PR。完整走一遍全链。
-6. 稳定后加大并行（每 issue 一个 worktree，经验 2–4 并发）。全程任何人打开 repo 可从 issues + PR + checks + git log 重建演变史。
+1. `gh auth login` → `./scripts/bootstrap-github.sh`（建公开 repo + labels + milestones + branch protection，零 Actions Secret）。
+2. 为 bot collaborator 创建 classic PAT（`repo` scope）并 `export AGENT_GH_TOKEN=<PAT>`；自动化缺失它会 fail-closed。
+3. 本机装好并登录 `claude` / `codex` / `opencode`。
+4. 实测门禁：试 merge 未过 check 的 PR、试让 agent 改 `openspec/`，都应被拒。
+5. 起 `node scripts/watch.mjs` → 开首个需求 issue 并打 `ready` → watch 自动起草提案 PR。
+6. **人逐条审定提案里的验收判据**（这是奖励函数，值得花一小时）→ merge → watch 自动播种、派发、顾问评审与最多一轮复修/复审 → 人 merge 实现 PR。完整走一遍全链。
+7. 稳定后加大并行（每 issue 一个 worktree，经验 2–4 并发）。全程任何人打开 repo 可从 issues + PR + checks + git log 重建演变史。
 
 ## 10. 现实预期
 
