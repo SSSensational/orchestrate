@@ -66,7 +66,7 @@ node scripts/review.mjs <PR#> codex
 
 - **commit**：author/committer = 干活的 agent（`Claude <noreply@anthropic.com>` / `Codex <noreply@openai.com>` / `OpenCode <noreply@opencode.ai>`），由 dispatch/propose 自动注入整个 builder 会话与兜底提交——谁干活谁署名。你自己的提交照常用你的 git 身份（本仓库已设 GitHub noreply 邮箱，保证归属到正确账号）。
 - **GitHub 对象**（可选 bot 身份）：`export AGENT_GH_TOKEN=<机器人账号 PAT>` 后，AI 产出的对象——开 PR、顾问评审评论、卡点评论、播种的 issue——以 bot 账号显示；未设则回落你的账号 + 正文溯源行（`Built-by:` / `Proposed-by:`）。评论正文头部始终标注具体 agent（bot 账号只有一个，per-agent 署名看正文与 commit author）。附带收益：bot 开的 PR 你可以正常 approve（GitHub 禁止自批自己开的 PR）。
-- **一次性设置 bot**：备用 GitHub 账号 → Settings → Developer settings → Fine-grained PAT（本 repo，Contents/Issues/Pull requests 写权限）→ 把该账号邀请为 repo collaborator（write）→ 起 watch 前 `export AGENT_GH_TOKEN=<PAT>`。
+- **一次性设置 bot**：备用 GitHub 账号 → 邀请为 repo collaborator（write）并接受 → 该账号 Settings → Developer settings → **Tokens (classic)**，`repo` scope（fine-grained PAT 访问不了他人名下仓库，必须 classic）→ 起 watch 前 `export AGENT_GH_TOKEN=<PAT>`。
 - 记账操作（label 交换、查询、push）始终走你的 gh 登录态。
 
 ## 多 issue 并行（本地）
