@@ -9,7 +9,10 @@ export const ADAPTERS = {
   codex: {
     displayName: 'Codex CLI',
     gitAuthor: { name: 'Codex', email: 'noreply@openai.com' }, // commit 的 author/committer：谁干活谁署名
-    build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', prompt]],
+    // `codex exec` 是非交互模式（无 TTY 可审批），本就不会弹审批——旧版 `--ask-for-approval never`
+    // 已在 codex-cli 0.144.1 移除，留着会在参数解析阶段即报错退出。无人值守语义由 `--sandbox workspace-write`
+    // （写入限工作区）承载，不再需要审批开关，也不扩大权限。
+    build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', prompt]],
     review: (prompt) => ['codex', ['exec', '--sandbox', 'read-only', prompt]],
   },
   claude: {
