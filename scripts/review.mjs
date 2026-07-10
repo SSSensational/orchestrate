@@ -15,13 +15,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ADAPTERS, AGENTS, agentFromLabels, ghAgent, resolve, runCapture, gh } from './agents.mjs';
+import { ADAPTERS, AGENTS, agentFromLabels, agentGhEnv, ghAgent, resolve, runCapture, gh } from './agents.mjs';
+import { REVIEW_CHANGES_EXIT, parseReviewVerdict, selectReviewer } from './review-policy.mjs';
 
 const [prNum, override] = process.argv.slice(2);
 if (!prNum) {
   console.error('用法：node scripts/review.mjs <pr#> [claude|codex|opencode]');
   process.exit(1);
 }
+agentGhEnv();
 
 const pr = JSON.parse(gh(['pr', 'view', prNum, '--json', 'title,body,labels,number']));
 const prLabels = pr.labels.map((l) => l.name);
@@ -39,9 +41,9 @@ if (closes) {
   } catch { /* issue 读取失败则以 PR 自身为准 */ }
 }
 
-let agent = override || agentFromLabels(prLabels, 'review') || agentFromLabels(issueLabels, 'review');
-if (!agent) {
-  agent = AGENTS.find((a) => a !== builtBy) || AGENTS[0];
+const labeled = agentFromLabels(prLabels, 'review') || agentFromLabels(issueLabels, 'review');
+const agent = selectReviewer({ override, labeled, builtBy, agents: AGENTS });
+if (!override && !labeled) {
   console.log(`未指定 reviewer，默认取异于 builder(${builtBy || '?'}) 的一家：${agent}`);
 }
 if (!ADAPTERS[agent]) { console.error(`未知 agent「${agent}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
@@ -88,7 +90,9 @@ try {
 }
 if (!text) { console.error(`reviewer 无输出（退出码 ${status}）——未发评论。`); process.exit(1); }
 
-const changes = /VERDICT:\s*CHANGES/i.test(text);
+const verdict = parseReviewVerdict(text);
+if (!verdict) { console.error('reviewer 输出缺少 VERDICT: PASS/CHANGES——未发评论。'); process.exit(1); }
+const changes = verdict === 'changes';
 const header =
   `**顾问评审 · ${ADAPTERS[agent].displayName}（本地 CLI）**  ` +
   `— 非必过门禁；必过 = ci / spec-validate / test-guard，人终审。\n\n`;
@@ -97,4 +101,5 @@ ghAgent(['pr', 'comment', prNum, '--body', header + text]); // 顾问评审 = AI
 console.log(`\n已发表顾问评审评论（VERDICT: ${changes ? 'CHANGES' : 'PASS'}）。合并与否由你终审。`);
 if (changes) {
   console.log('提示（教训闸轮）：若发现具有普适性，开 `type:decision` issue 记录，或合并后提炼进 AGENTS.md（人审）——见 operations「修复与学习」。');
+  process.exitCode = REVIEW_CHANGES_EXIT;
 }

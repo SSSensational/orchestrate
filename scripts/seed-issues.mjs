@@ -8,13 +8,14 @@
 // 播种后 Issue 是唯一活状态，tasks.md 不再维护（AGENTS.md「Spec 层」）。
 import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { ghAgent } from './agents.mjs';
+import { agentGhEnv, ghAgent } from './agents.mjs';
 
 const [change, milestoneArg, phase] = process.argv.slice(2);
 if (!change) {
   console.error('usage: node scripts/seed-issues.mjs <change-name> [milestone-title|-] [phase-label]');
   process.exit(1);
 }
+agentGhEnv();
 const milestone = milestoneArg && milestoneArg !== '-' ? milestoneArg : null;
 
 const path = `openspec/changes/${change}/tasks.md`;
