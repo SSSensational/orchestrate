@@ -48,5 +48,10 @@ acceptance/** 对 builder 可读（公开 repo，无法 held-out）；test-guard
 
 ## D12 人不碰脚本：watch 单进程打通全链
 
-`watch.mjs` 常驻本机、轮询 GitHub，是全链唯一入口：issue 打 `ready`（无 `change:*` / `agent:build:*`）→ 自动起草提案 PR；提案 merge → 自动播种实现 issues（自带 ready，milestone/phase 取自提案 Refs 的源 issue）；带 `change:*` 或 `agent:build:*` 的 ready issue → dispatch（D10 环）→ 开 PR → 自动顾问评审；同 change 串行（D6）；缺省 builder 由 `--builder` 指定，reviewer 自动异于 builder。人保留且仅保留两个动作：**审提案判据（定奖励函数）、终审 merge**；底层脚本降级为调试 / 接管通道。播种与派发触发均为确定性操作（label 协议 + gh 轮询，无 LLM 判断，宪法第 10 条）；失败打 needs-human、不自动重试。
+`watch.mjs` 常驻本机、轮询 GitHub，是全链唯一入口：issue 打 `ready`（无 `change:*` / `agent:build:*`）→ 自动起草提案 PR；提案 merge → 自动播种实现 issues（自带 ready，milestone/phase 取自提案 Refs 的源 issue）；带 `change:*` 或 `agent:build:*` 的 ready issue → dispatch（D10 环）→ 开 PR → 自动顾问评审；同 change 串行（D6）；缺省 builder / reviewer 由 `--builder` / `--reviewer` 指定（当前均缺省 codex；label 优先于缺省，同厂商组合会在评审时告警——需要 D9 的异厂商第二意见时打 label 或换缺省即可）。人保留且仅保留两个动作：**审提案判据（定奖励函数）、终审 merge**；底层脚本降级为调试 / 接管通道。播种与派发触发均为确定性操作（label 协议 + gh 轮询，无 LLM 判断，宪法第 10 条）；失败打 needs-human、不自动重试。
 运行约束：**watch 只由人启动，agent 禁止拉起**（AGENTS.md 纪律 7）——它是长驻编排进程，agent 拉起会脱离人的生命周期管理并可能双开。**全机同时只允许一个实例**（`.git/watch.lock` PID 探活锁，重复启动即退出）。**认领必须崩溃可恢复**：认领 = `ready → wip` 标签交换（状态在 GitHub 可见），完成清 `wip`、失败转 `needs-human`；启动时把遗留 `wip` 还原为 `ready` 自动归队（单实例保证了还原的安全性）。dispatch 对已有 open PR 幂等（复用推送，不重复 create）。
+
+## D13 AI 身份：commit author = 干活的 agent；GitHub 对象走机器人账号（可选）
+
+**git 层**：dispatch/propose 给整个 builder 会话与兜底提交注入 `GIT_AUTHOR_* / GIT_COMMITTER_*`（Claude / Codex / OpenCode 各自的 noreply 署名）——谁干活谁署名，无需任何账号；人的 git 身份只出现在人自己的提交与 merge。
+**GitHub 层**：评论 / PR / issue 的显示身份 = 认证账号，无法伪装。设 `AGENT_GH_TOKEN`（机器人账号 PAT，repo write、须为 collaborator）后，AI 产出的对象（开 PR、顾问评审评论、卡点评论、播种 issue）以 bot 身份创建；未设则回落人的 gh 登录态 + 正文溯源行。记账操作（label、查询、push）始终走人的身份。附带收益：bot 开的 PR 人可正常 approve——GitHub 禁止自批自己开的 PR，此前 CODEOWNERS 审查在自开 PR 上无法形式化满足。bot 账号只有一个：per-agent 的署名粒度在 commit author 与评论正文头部，不在账号层（多账号违反 GitHub ToS 且徒增凭据管理）。

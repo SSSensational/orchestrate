@@ -8,6 +8,7 @@
 // 播种后 Issue 是唯一活状态，tasks.md 不再维护（AGENTS.md「Spec 层」）。
 import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { ghAgent } from './agents.mjs';
 
 const [change, milestoneArg, phase] = process.argv.slice(2);
 if (!change) {
@@ -56,8 +57,8 @@ for (const t of tasks) {
       ? t.subs.map((s) => `- [ ] ${s}`)
       : ['- [ ] （待补充——合并前必须可由 CI / 测试 / 可观察行为证实）']),
   ].join('\n');
-  execFileSync('gh', ['issue', 'create', '--title', t.title, '--body', body,
+  ghAgent(['issue', 'create', '--title', t.title, '--body', body,
     ...(milestone ? ['--milestone', milestone] : []),
-    ...labels.flatMap((l) => ['--label', l])], { stdio: 'inherit' });
+    ...labels.flatMap((l) => ['--label', l])], { stdio: 'inherit' }); // 播种 = AI 产出，有 bot token 时以 bot 身份建
 }
 console.log(`已播种 ${tasks.length} 个 issue（change:${change}${milestone ? ` → milestone「${milestone}」` : ''}，自带 ready——watch 会自动派发）`);

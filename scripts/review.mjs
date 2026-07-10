@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ADAPTERS, AGENTS, agentFromLabels, resolve, runCapture, gh } from './agents.mjs';
+import { ADAPTERS, AGENTS, agentFromLabels, ghAgent, resolve, runCapture, gh } from './agents.mjs';
 
 const [prNum, override] = process.argv.slice(2);
 if (!prNum) {
@@ -93,7 +93,7 @@ const header =
   `**顾问评审 · ${ADAPTERS[agent].displayName}（本地 CLI）**  ` +
   `— 非必过门禁；必过 = ci / spec-validate / test-guard，人终审。\n\n`;
 // 用 pr comment 而非 pr review：自评自审的 PR 上 review 会被 GitHub 拒（不能 approve/request-changes 自己的 PR）。
-gh(['pr', 'comment', prNum, '--body', header + text]);
+ghAgent(['pr', 'comment', prNum, '--body', header + text]); // 顾问评审 = AI 产出，有 bot token 时以 bot 身份发
 console.log(`\n已发表顾问评审评论（VERDICT: ${changes ? 'CHANGES' : 'PASS'}）。合并与否由你终审。`);
 if (changes) {
   console.log('提示（教训闸轮）：若发现具有普适性，开 `type:decision` issue 记录，或合并后提炼进 AGENTS.md（人审）——见 operations「修复与学习」。');

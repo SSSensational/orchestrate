@@ -47,7 +47,7 @@ node scripts/dispatch.mjs 12 opencode
 node scripts/review.mjs <PR#> codex
 ```
 
-- **不打 label 时的缺省**：builder = watch 的 `--builder`（默认 claude）；**reviewer 自动取异于 builder 的一家**（异厂商第二意见；相同则告警——模型盲点相关，见 "Great Models Think Alike"）。打了 label 则以 label 为准。
+- **不打 label 时的缺省**：builder = `--builder`、reviewer = `--reviewer`（当前均缺省 codex）；手动跑 `review.mjs` 不带参时自动取异于 builder 的一家。builder 与 reviewer 同厂商时告警提示（模型盲点相关，见 "Great Models Think Alike"——异厂商第二意见更有效，是否接受由你）。打了 label 则以 label 为准。
 - 顾问评审**不是必过门禁**：抓不抓得到问题都不阻塞合并；真正的关卡是确定性检查 + 你的终审。
 - reviewer 在 PR head 的临时 detached worktree（只读副本）里运行，diff 与判据落文件传路径——省 token，且对无只读沙箱的 CLI（opencode）是硬隔离。
 - 适配器表在 `scripts/agents.mjs`（产品 AgentAdapter registry 的退化形态）；新增一家本地 CLI = 加一条三元组。
@@ -61,6 +61,13 @@ node scripts/review.mjs <PR#> codex
 - `needs-human` —— agent 在等你答复/裁决；处理完后重新点火 = `--remove-label needs-human --add-label ready`
 - `approved-test-change` —— 人工豁免：允许该 PR 修改既有测试（必须由人打，test-guard 会核验 actor）
 - `change:<name>` —— 该 issue 属于某个 openspec change（seed-issues 自动打）
+
+## 身份与署名
+
+- **commit**：author/committer = 干活的 agent（`Claude <noreply@anthropic.com>` / `Codex <noreply@openai.com>` / `OpenCode <noreply@opencode.ai>`），由 dispatch/propose 自动注入整个 builder 会话与兜底提交——谁干活谁署名。你自己的提交照常用你的 git 身份（本仓库已设 GitHub noreply 邮箱，保证归属到正确账号）。
+- **GitHub 对象**（可选 bot 身份）：`export AGENT_GH_TOKEN=<机器人账号 PAT>` 后，AI 产出的对象——开 PR、顾问评审评论、卡点评论、播种的 issue——以 bot 账号显示；未设则回落你的账号 + 正文溯源行（`Built-by:` / `Proposed-by:`）。评论正文头部始终标注具体 agent（bot 账号只有一个，per-agent 署名看正文与 commit author）。附带收益：bot 开的 PR 你可以正常 approve（GitHub 禁止自批自己开的 PR）。
+- **一次性设置 bot**：备用 GitHub 账号 → 邀请为 repo collaborator（write）并接受 → 该账号 Settings → Developer settings → **Tokens (classic)**，`repo` scope（fine-grained PAT 访问不了他人名下仓库，必须 classic）→ 起 watch 前 `export AGENT_GH_TOKEN=<PAT>`。
+- 记账操作（label 交换、查询、push）始终走你的 gh 登录态。
 
 ## 多 issue 并行（本地）
 

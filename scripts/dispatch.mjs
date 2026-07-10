@@ -10,7 +10,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { ADAPTERS, AGENTS, agentFromLabels, resolve, runLive, gh } from './agents.mjs';
+import { ADAPTERS, AGENTS, agentEnv, agentFromLabels, ghAgent, resolve, runLive, gh } from './agents.mjs';
 
 const [num, override] = process.argv.slice(2);
 if (!num) {
@@ -88,7 +88,7 @@ let prompt = [
 let checks = { ok: true, skipped: true };
 for (let attempt = 1; ; attempt++) {
   console.log(`\n== builder：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}  ·  尝试 ${attempt}/${MAX_ATTEMPTS}\n`);
-  const code = runLive(resolve(agent, 'build', prompt), dir);
+  const code = runLive(resolve(agent, 'build', prompt), dir, agentEnv(agent));
   if (code !== 0) { console.error(`\nbuilder 退出码 ${code}（按基础设施故障处理）——检查上面输出；未开 PR。`); process.exit(code); }
   checks = localChecks(dir);
   if (checks.ok) break;
@@ -106,7 +106,7 @@ for (let attempt = 1; ; attempt++) {
       `worktree 保留在本地 \`${dir}\`（分支 \`issue/${num}\`），可人工接手，或换 builder 重跑 dispatch（续用同一 worktree）。`,
     ].join('\n');
     try {
-      gh(['issue', 'comment', num, '--body', body]);
+      ghAgent(['issue', 'comment', num, '--body', body]); // 卡点评论 = AI 产出，有 bot token 时以 bot 身份发
       gh(['issue', 'edit', num, '--add-label', 'needs-human']);
     } catch (e) { console.error(`（gh 留痕失败：${e.message}）`); }
     console.error(`\n${MAX_ATTEMPTS} 次尝试后检查仍未过——已在 issue 记录卡点并打 needs-human；未开 PR。`);
@@ -126,11 +126,12 @@ for (let attempt = 1; ; attempt++) {
   ].join('\n');
 }
 
-// 5) 兜底提交（agent 若留了未提交改动，替它 commit，避免空 PR）
+// 5) 兜底提交（agent 若留了未提交改动，替它 commit，避免空 PR；author/committer = 干活的 agent）
 const dirty = spawnSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }).stdout.trim();
 if (dirty) {
   execFileSync('git', ['-C', dir, 'add', '-A']);
-  execFileSync('git', ['-C', dir, 'commit', '-m', `issue #${num}: ${issue.title}`], { stdio: 'inherit' });
+  execFileSync('git', ['-C', dir, 'commit', '-m', `issue #${num}: ${issue.title}`],
+    { stdio: 'inherit', env: agentEnv(agent) });
 }
 
 // 6) 推分支 + 开 PR（已有 open PR 则复用——续修 / 崩溃恢复时推送即更新）
@@ -154,7 +155,7 @@ if (existing.length) {
     '> 由 scripts/dispatch.mjs 开出。评审：`node scripts/review.mjs <本 PR#>`。',
     '> 合并前须 ci + spec-validate + test-guard 全绿；LLM 评审为顾问意见；人终审。',
   ].join('\n');
-  url = gh(['pr', 'create', '--head', `issue/${num}`, '--title', issue.title, '--body', body], { cwd: dir }).trim();
+  url = ghAgent(['pr', 'create', '--head', `issue/${num}`, '--title', issue.title, '--body', body], { cwd: dir }).trim();
   console.log(`\nPR 已创建：${url}`);
 }
 console.log(`下一步：node scripts/review.mjs ${url.split('/').pop()}  [reviewer]`);
