@@ -10,7 +10,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
-import { ADAPTERS, AGENTS, agentFromLabels, resolve, runLive, gh } from './agents.mjs';
+import { ADAPTERS, AGENTS, agentEnv, agentFromLabels, ghAgent, resolve, runLive, gh } from './agents.mjs';
 
 const [num, override] = process.argv.slice(2);
 if (!num) {
@@ -69,16 +69,15 @@ const prompt = [
 
 // 4) 跑起草者（可写工作区，实时可见）
 console.log(`\n== proposer：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}\n`);
-const code = runLive(resolve(agent, 'build', prompt), dir);
+const code = runLive(resolve(agent, 'build', prompt), dir, agentEnv(agent));
 if (code !== 0) { console.error(`\nproposer 退出码 ${code}——检查上面输出；未开 PR。`); process.exit(code); }
 
-// 5) 兜底提交（agent 若留了未提交改动，替它 commit；trailer 标注实际作者是谁）
+// 5) 兜底提交（agent 若留了未提交改动，替它 commit；author/committer = 干活的 agent）
 const dirty = spawnSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }).stdout.trim();
 if (dirty) {
   execFileSync('git', ['-C', dir, 'add', '-A']);
-  execFileSync('git', ['-C', dir, 'commit',
-    '-m', `propose: openspec change for issue #${num}`,
-    '-m', `Co-Authored-By: ${ADAPTERS[agent].coauthor}`], { stdio: 'inherit' });
+  execFileSync('git', ['-C', dir, 'commit', '-m', `propose: openspec change for issue #${num}`],
+    { stdio: 'inherit', env: agentEnv(agent) });
 }
 
 // 6) 探测本次新增的 change 目录名（openspec/changes/<name>/…）——用于 PR 标题与下一步命令
@@ -108,7 +107,7 @@ const body = [
   '> （这一步 = 定下「什么算完成」，先于实现）。',
   `> 合并后：\`node scripts/seed-issues.mjs ${change} "<里程碑>"\` 播种实现 issue → dispatch。`,
 ].join('\n');
-const url = gh(['pr', 'create', '--head', `propose/${num}`, '--title', `proposal: ${change}`, '--body', body],
+const url = ghAgent(['pr', 'create', '--head', `propose/${num}`, '--title', `proposal: ${change}`, '--body', body],
   { cwd: dir }).trim();
 console.log(`\n提案 PR 已创建：${url}`);
 console.log(`合并后：node scripts/seed-issues.mjs ${change} "<里程碑>"`);
