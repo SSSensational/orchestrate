@@ -2,7 +2,7 @@
 
 `skills/` 由 `openspec init` 生成（OpenSpec 工作流技能）。
 
-待办：按 https://developers.openai.com/codex/hooks 配置 PreToolUse deny
-（拦对 `docs/**` 与 `.github/**` 的写），与 `.claude/settings.json` 对等。
-注意：这是纵深防御层，不是安全边界——主强制层在 GitHub 平台侧
-（branch protection + CODEOWNERS + required checks），见 ai-native-build.md §6。
+不对 `docs/**` 与 `.github/**` 配置笼统写入 deny；agent 仅在当前 issue
+明确列入范围时可在 issue 分支起草，并且必须走 PR。硬边界由 GitHub 平台侧的
+branch protection + CODEOWNERS + required checks + 人终审承担，agent 永远不得
+直接 push 受保护分支或 merge。见 ai-native-build.md §6。
