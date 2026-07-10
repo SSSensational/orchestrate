@@ -18,7 +18,7 @@
 ## 日常只有三个动作（前提：本机挂着 `node scripts/watch.mjs`）
 
 watch 是全链入口（D12）——提案、播种、派发（D10 重试环）、顾问评审全自动；首次 `VERDICT: CHANGES` 还会自动回喂原 builder 复修一次并复审一次。你只碰 GitHub。
-**watch 只由人启动**（agent 禁止拉起，AGENTS.md 纪律 7）；全机同时只允许一个实例（PID 锁，重复启动直接退出）；认领 = `ready → wip`，崩溃遗留的 `wip` 在下次启动自动还原为 `ready` 归队。
+**watch 只由人启动**（agent 禁止拉起，AGENTS.md 纪律 8）；全机同时只允许一个实例（PID 锁，重复启动直接退出）；认领 = `ready → wip`，崩溃遗留的 `wip` 在下次启动自动还原为 `ready` 归队。
 
 | 动作 | 说明 |
 |---|---|
