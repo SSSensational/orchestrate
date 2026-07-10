@@ -79,13 +79,16 @@ export function gh(args, opts = {}) {
   return execFileSync('gh', args, { encoding: 'utf8', ...opts });
 }
 
-// AI 产出的 GitHub 对象（开 PR / 发评论 / 播种 issue）走机器人账号身份：
-// 设 AGENT_GH_TOKEN（bot 账号 PAT，repo write 权限、须为 collaborator）即启用；
-// 未设则回落人的 gh 登录态（此时靠 PR 正文溯源行标注 AI 身份）。
+// AI 产出的 GitHub 对象（开 PR / 发评论 / 播种 issue）只走机器人账号身份。
 // 记账类操作（label 交换、查询、push）始终走人的身份。
+export function agentGhEnv(env = process.env) {
+  if (!env.AGENT_GH_TOKEN) {
+    throw new Error('缺少 AGENT_GH_TOKEN：拒绝用人的 gh 登录态创建 AI GitHub 对象');
+  }
+  return { ...env, GH_TOKEN: env.AGENT_GH_TOKEN };
+}
+
 export function ghAgent(args, opts = {}) {
-  const env = process.env.AGENT_GH_TOKEN
-    ? { ...process.env, GH_TOKEN: process.env.AGENT_GH_TOKEN }
-    : process.env;
-  return execFileSync('gh', args, { encoding: 'utf8', env, ...opts });
+  const env = agentGhEnv(opts.env || process.env);
+  return execFileSync('gh', args, { encoding: 'utf8', ...opts, env });
 }

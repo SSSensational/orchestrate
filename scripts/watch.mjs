@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder claude] [--label ready] [--once] [--dry-run]
+// 用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder codex] [--reviewer agent] [--label ready] [--once] [--dry-run]
 //
 // 常驻单进程 = 全链入口（决策 D12）。人只碰 GitHub，不敲脚本：
 //   issue 打 ready（无 change:* / agent:build:*）→ 自动 propose.mjs 起草提案 PR —— 人审判据
@@ -19,8 +19,9 @@ import { spawn, execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { agentFromLabels, AGENTS, gh } from './agents.mjs';
+import { agentFromLabels, agentGhEnv, AGENTS, gh } from './agents.mjs';
 import { firstOpenIssueNumber } from './watch-order.mjs';
+import { reviewStep } from './review-policy.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const WIP = 'wip';
@@ -28,7 +29,7 @@ const WIP = 'wip';
 // --- 参数 ---
 const argv = process.argv.slice(2);
 if (argv.includes('-h') || argv.includes('--help')) {
-  console.log('用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder codex] [--reviewer codex] [--label ready] [--once] [--dry-run]');
+  console.log('用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder codex] [--reviewer agent] [--label ready] [--once] [--dry-run]');
   process.exit(0);
 }
 const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
@@ -36,11 +37,12 @@ const INTERVAL = Math.max(5, Number(opt('--interval', 30))) * 1000;
 const MAX = Math.max(1, Number(opt('--max', 2)));
 const LABEL = opt('--label', 'ready');
 const BUILDER = opt('--builder', AGENTS[0]);   // issue 没打 agent:build:* 时的缺省 builder
-const REVIEWER = opt('--reviewer', AGENTS[0]); // issue/PR 没打 agent:review:* 时的缺省 reviewer（label 优先）
+const REVIEWER = opt('--reviewer', null);       // 未指定时由 review.mjs 自动选异于 builder 的一家
 const ONCE = argv.includes('--once');
 const DRY = argv.includes('--dry-run');
 if (!AGENTS.includes(BUILDER)) { console.error(`未知缺省 builder「${BUILDER}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
-if (!AGENTS.includes(REVIEWER)) { console.error(`未知缺省 reviewer「${REVIEWER}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
+if (REVIEWER && !AGENTS.includes(REVIEWER)) { console.error(`未知缺省 reviewer「${REVIEWER}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
+agentGhEnv();
 
 // --- 单实例锁（PID 探活；锁文件在 .git/ 下，不入库）---
 const GIT_DIR = execFileSync('git', ['rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
@@ -161,9 +163,9 @@ function seedPass() {
 
 // --- build：dispatch（重试环）→ 开 PR → 自动顾问评审（复用同一并发槽，串行）---
 function startBuild(num, builderLabel, reviewerLabel, change) {
-  const args = builderLabel ? [String(num)] : [String(num), BUILDER];
-  const child = runScript(num, 'dispatch.mjs', args, (code) => {
-    if (code === 0) return startReview(num, reviewerLabel, change);
+  const builder = builderLabel || BUILDER;
+  const child = runScript(num, 'dispatch.mjs', [String(num), builder], (code) => {
+    if (code === 0) return startReview(num, builder, reviewerLabel, change, 0);
     inflight.delete(num);
     log(`✗ #${num} dispatch 退出码 ${code} —— 打 needs-human（dispatch 卡住协议已留痕时此操作幂等）`);
     flagHuman(num);
@@ -173,7 +175,19 @@ function startBuild(num, builderLabel, reviewerLabel, change) {
   log(`起跑 #${num}（build · ${builderLabel || BUILDER}，在跑 ${inflight.size}/${MAX}）`);
 }
 
-function startReview(num, reviewerLabel, change) {
+function startRevision(num, builder, reviewerLabel, change, pr, revisionRound) {
+  const child = runScript(num, 'dispatch.mjs', [String(num), builder, String(pr.number)], (code) => {
+    if (code === 0) return startReview(num, builder, reviewerLabel, change, revisionRound);
+    inflight.delete(num);
+    log(`✗ #${num} 顾问复修失败（dispatch 退出码 ${code}）——打 needs-human`);
+    flagHuman(num);
+    maybeExit();
+  });
+  inflight.set(num, { child, change });
+  log(`#${num} → PR #${pr.number} 顾问要求修改，回喂 ${builder} 复修（最多一轮）`);
+}
+
+function startReview(num, builder, reviewerLabel, change, revisionRound) {
   let pr = null;
   try {
     pr = JSON.parse(gh(['pr', 'list', '--head', `issue/${num}`, '--state', 'open',
@@ -186,14 +200,16 @@ function startReview(num, reviewerLabel, change) {
     maybeExit();
     return;
   }
-  // label 优先：issue 打了 agent:review:* 就让 review.mjs 自己解析；否则传缺省 reviewer
-  const args = reviewerLabel ? [String(pr.number)] : [String(pr.number), REVIEWER];
+  const reviewer = reviewerLabel || REVIEWER;
+  const args = reviewer ? [String(pr.number), reviewer] : [String(pr.number)];
   const child = runScript(num, 'review.mjs', args, (code) => {
+    const step = reviewStep(code, revisionRound);
+    if (step === 'revise') return startRevision(num, builder, reviewerLabel, change, pr, 1);
     inflight.delete(num);
     clearWip(num);
-    log(code === 0
-      ? `✓ #${num} → PR #${pr.number} 已开 + 顾问评审已发——等你终审`
-      : `✓ #${num} → PR #${pr.number} 已开；⚠ 顾问评审失败（退出码 ${code}），顾问非门禁、可稍后手动补跑 review.mjs`);
+    if (step === 'pass') log(`✓ #${num} → PR #${pr.number} 顾问 PASS——等你终审`);
+    else if (step === 'changes') log(`✓ #${num} → PR #${pr.number} 复审仍为 CHANGES——停止自动循环，交你终审`);
+    else log(`✓ #${num} → PR #${pr.number} 已开；⚠ 顾问评审失败（退出码 ${code}），顾问非门禁`);
     maybeExit();
   });
   inflight.set(num, { child, change });
@@ -293,7 +309,7 @@ process.on('SIGINT', () => {
 });
 
 // --- 主循环 ---
-log(`启动：label=${LABEL} 并发=${MAX} 缺省builder=${BUILDER} 缺省reviewer=${REVIEWER} 间隔=${INTERVAL / 1000}s pid=${process.pid}`
+log(`启动：label=${LABEL} 并发=${MAX} 缺省builder=${BUILDER} 缺省reviewer=${REVIEWER || 'auto-different'} 间隔=${INTERVAL / 1000}s pid=${process.pid}`
   + `${ONCE ? ' --once' : ''}${DRY ? ' --dry-run' : ''}`);
 log(`流程：ready → 提案（无 change/agent:build）或实现（有）；提案 merge → 自动播种；PR 自动顾问评审；merge 由你终审`);
 recoverOrphans();

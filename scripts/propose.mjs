@@ -10,13 +10,14 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
-import { ADAPTERS, AGENTS, agentEnv, agentFromLabels, ghAgent, resolve, runLive, gh } from './agents.mjs';
+import { ADAPTERS, AGENTS, agentEnv, agentFromLabels, agentGhEnv, ghAgent, resolve, runLive, gh } from './agents.mjs';
 
 const [num, override] = process.argv.slice(2);
 if (!num) {
   console.error('用法：node scripts/propose.mjs <issue#> [claude|codex|opencode]');
   process.exit(1);
 }
+agentGhEnv();
 
 // 1) 读需求 issue（标题 / 正文=需求描述 / labels）
 const issue = JSON.parse(gh(['issue', 'view', num, '--json', 'title,body,labels,number']));

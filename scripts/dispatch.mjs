@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 用法：node scripts/dispatch.mjs <issue#> [claude|codex|opencode]
+// 用法：node scripts/dispatch.mjs <issue#> [claude|codex|opencode] [review-pr#]
 //
 // 本地认领一个 issue，用指定 builder 在隔离 worktree（分支 issue/<n>）实现；开 PR 前先过
 // 本地确定性检查（required checks 的本地镜像），红则把失败输出截尾回喂 builder 续跑，
@@ -10,13 +10,15 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { ADAPTERS, AGENTS, agentEnv, agentFromLabels, ghAgent, resolve, runLive, gh } from './agents.mjs';
+import { ADAPTERS, AGENTS, agentEnv, agentFromLabels, agentGhEnv, ghAgent, resolve, runLive, gh } from './agents.mjs';
+import { latestChangesFeedback } from './review-policy.mjs';
 
-const [num, override] = process.argv.slice(2);
+const [num, override, reviewPr] = process.argv.slice(2);
 if (!num) {
-  console.error('用法：node scripts/dispatch.mjs <issue#> [claude|codex|opencode]');
+  console.error('用法：node scripts/dispatch.mjs <issue#> [claude|codex|opencode] [review-pr#]');
   process.exit(1);
 }
+agentGhEnv();
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.DISPATCH_MAX_ATTEMPTS || 3));
 
 // 1) 读 issue（标题 / 正文=验收判据 / labels）
@@ -28,6 +30,16 @@ if (!agent) {
   process.exit(1);
 }
 if (!ADAPTERS[agent]) { console.error(`未知 agent「${agent}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
+
+let reviewFeedback = null;
+if (reviewPr) {
+  const { comments } = JSON.parse(gh(['pr', 'view', reviewPr, '--json', 'comments']));
+  reviewFeedback = latestChangesFeedback(comments);
+  if (!reviewFeedback) {
+    console.error(`PR #${reviewPr} 没有可回喂的 VERDICT: CHANGES 顾问评论`);
+    process.exit(1);
+  }
+}
 
 // 2) 建隔离 worktree（分支 issue/<n>，基于 origin/main——本地 main 可能过期/被重写）
 // 认领防撞：一个 issue 同时只一个 builder
@@ -78,13 +90,26 @@ const tail = (s, n) => s.split('\n').slice(-n).join('\n');
 // 4) 重试环：builder 会话 → 本地确定性检查 → 红则失败截尾回喂续跑（≤ MAX_ATTEMPTS）。
 // 成败不以 builder 退出码判定（opencode 退出码 0 也可能失败，见 PRD §3.2）；
 // 退出码非 0 按基础设施故障处理（CLI 未装 / 未登录 / 崩溃），立即停手交人，不计入重试。
-let prompt = [
-  `完成 GitHub issue #${num}：${issue.title}`,
-  '',
-  issue.body || '',
-  '',
-  DISCIPLINE,
-].join('\n');
+let prompt = reviewFeedback
+  ? [
+      `复修 GitHub issue #${num}：${issue.title}`,
+      '',
+      issue.body || '',
+      '',
+      '下面是顾问对当前 PR 的 CHANGES 意见。逐条判断：有依据的做最小修复；不成立的不要盲从，保留实现交由复审和人终审。',
+      '',
+      '--- 顾问评审 ---',
+      reviewFeedback,
+      '',
+      DISCIPLINE,
+    ].join('\n')
+  : [
+      `完成 GitHub issue #${num}：${issue.title}`,
+      '',
+      issue.body || '',
+      '',
+      DISCIPLINE,
+    ].join('\n');
 let checks = { ok: true, skipped: true };
 for (let attempt = 1; ; attempt++) {
   console.log(`\n== builder：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}  ·  尝试 ${attempt}/${MAX_ATTEMPTS}\n`);
