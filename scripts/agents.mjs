@@ -8,11 +8,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 export const ADAPTERS = {
   codex: {
     displayName: 'Codex CLI',
+    coauthor: 'Codex <noreply@openai.com>', // 兜底 commit 的 Co-Authored-By（GitHub 渲染共同作者）
     build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', prompt]],
     review: (prompt) => ['codex', ['exec', '--sandbox', 'read-only', prompt]],
   },
   claude: {
     displayName: 'Claude Code',
+    coauthor: 'Claude <noreply@anthropic.com>',
     // 无头 builder 预设 auto-approve（PRD §3.2 共性）：acceptEdits 只放行编辑、Bash 全被审批墙挡住，
     // agent 连自测/validate 都跑不了。安全 = worktree 隔离 + 平台门禁 + repo deny hooks。
     build: (prompt) => ['claude', ['-p', prompt, '--permission-mode', 'bypassPermissions']],
@@ -20,6 +22,7 @@ export const ADAPTERS = {
   },
   opencode: {
     displayName: 'OpenCode',
+    coauthor: 'OpenCode <noreply@opencode.ai>',
     build: (prompt) => ['opencode', ['run', prompt]],
     review: (prompt) => ['opencode', ['run', prompt]], // 无只读沙箱——由 review.mjs 放进 PR head 的临时 worktree 硬隔离（写不到主工作树）+ prompt 约束
   },

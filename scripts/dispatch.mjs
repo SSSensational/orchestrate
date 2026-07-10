@@ -126,11 +126,13 @@ for (let attempt = 1; ; attempt++) {
   ].join('\n');
 }
 
-// 5) 兜底提交（agent 若留了未提交改动，替它 commit，避免空 PR）
+// 5) 兜底提交（agent 若留了未提交改动，替它 commit，避免空 PR；trailer 标注实际作者是谁）
 const dirty = spawnSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }).stdout.trim();
 if (dirty) {
   execFileSync('git', ['-C', dir, 'add', '-A']);
-  execFileSync('git', ['-C', dir, 'commit', '-m', `issue #${num}: ${issue.title}`], { stdio: 'inherit' });
+  execFileSync('git', ['-C', dir, 'commit',
+    '-m', `issue #${num}: ${issue.title}`,
+    '-m', `Co-Authored-By: ${ADAPTERS[agent].coauthor}`], { stdio: 'inherit' });
 }
 
 // 6) 推分支 + 开 PR（已有 open PR 则复用——续修 / 崩溃恢复时推送即更新）

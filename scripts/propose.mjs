@@ -72,11 +72,13 @@ console.log(`\n== proposer：${ADAPTERS[agent].displayName}  ·  issue #${num}  
 const code = runLive(resolve(agent, 'build', prompt), dir);
 if (code !== 0) { console.error(`\nproposer 退出码 ${code}——检查上面输出；未开 PR。`); process.exit(code); }
 
-// 5) 兜底提交（agent 若留了未提交改动，替它 commit）
+// 5) 兜底提交（agent 若留了未提交改动，替它 commit；trailer 标注实际作者是谁）
 const dirty = spawnSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }).stdout.trim();
 if (dirty) {
   execFileSync('git', ['-C', dir, 'add', '-A']);
-  execFileSync('git', ['-C', dir, 'commit', '-m', `propose: openspec change for issue #${num}`], { stdio: 'inherit' });
+  execFileSync('git', ['-C', dir, 'commit',
+    '-m', `propose: openspec change for issue #${num}`,
+    '-m', `Co-Authored-By: ${ADAPTERS[agent].coauthor}`], { stdio: 'inherit' });
 }
 
 // 6) 探测本次新增的 change 目录名（openspec/changes/<name>/…）——用于 PR 标题与下一步命令
