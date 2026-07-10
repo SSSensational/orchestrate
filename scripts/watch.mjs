@@ -7,7 +7,7 @@
 //   issue 打 ready（有 change:* 或 agent:build:*）→ 自动 dispatch.mjs（D10 重试环）
 //     → 开 PR → 自动 review.mjs 顾问评审 —— 人终审 merge
 // 人保留且仅保留两个动作：审提案判据（定奖励函数）、终审 merge（宪法第 10 条）。
-// 同一 change 的 issue 串行派发（worktree 只隔离文件，防不了语义冲突，D6）。
+// 同一 change 的 issue 按编号串行派发；前序 issue 由合并 PR 关闭后才解锁下一个（D6）。
 //
 // 纯本地、往外轮询 GitHub——你的机器无需公网、无 webhook、无云。
 // 认领 = ready → wip 标签交换（状态在 GitHub 可见、崩溃可恢复）；完成清 wip；
@@ -20,6 +20,7 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { agentFromLabels, AGENTS, gh } from './agents.mjs';
+import { firstOpenIssueNumber } from './watch-order.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const WIP = 'wip';
@@ -215,6 +216,7 @@ function poll() {
   if (stopping) return;
   seedPass();
   let issues = [];
+  const openByChange = new Map();
   try {
     issues = JSON.parse(gh(['issue', 'list', '--state', 'open', '--label', LABEL,
       '--json', 'number,title,labels', '--limit', '50']));
@@ -228,6 +230,25 @@ function poll() {
     const builderLabel = agentFromLabels(labels, 'build');
     const reviewerLabel = agentFromLabels(labels, 'review');
     const mode = change || builderLabel ? 'build' : 'propose';
+    if (change) {
+      if (!openByChange.has(change)) {
+        try {
+          openByChange.set(change, JSON.parse(gh(['issue', 'list', '--state', 'open', '--label', change,
+            '--json', 'number', '--limit', '1000'])));
+        } catch (e) {
+          openByChange.set(change, null);
+          log(`查询 change「${change}」前序任务失败（稍后重试）：${e.message}`);
+        }
+      }
+      const open = openByChange.get(change);
+      if (!open) continue;
+      const first = firstOpenIssueNumber(open);
+      if (first === null) continue;
+      if (first !== it.number) {
+        log(`跳过 #${it.number}：等待同 change「${change}」前序 #${first} 合并`);
+        continue;
+      }
+    }
     if (change && [...inflight.values()].some((v) => v.change === change)) {
       log(`跳过 #${it.number}：同 change「${change}」有任务在跑（串行防语义冲突）`);
       continue;
