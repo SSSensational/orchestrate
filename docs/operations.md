@@ -47,7 +47,7 @@ node scripts/dispatch.mjs 12 opencode
 node scripts/review.mjs <PR#> codex
 ```
 
-- **不打 label 时的缺省**：builder = watch 的 `--builder`（默认 claude）；**reviewer 自动取异于 builder 的一家**（异厂商第二意见；相同则告警——模型盲点相关，见 "Great Models Think Alike"）。打了 label 则以 label 为准。
+- **不打 label 时的缺省**：builder = `--builder`、reviewer = `--reviewer`（当前均缺省 codex）；手动跑 `review.mjs` 不带参时自动取异于 builder 的一家。builder 与 reviewer 同厂商时告警提示（模型盲点相关，见 "Great Models Think Alike"——异厂商第二意见更有效，是否接受由你）。打了 label 则以 label 为准。
 - 顾问评审**不是必过门禁**：抓不抓得到问题都不阻塞合并；真正的关卡是确定性检查 + 你的终审。
 - reviewer 在 PR head 的临时 detached worktree（只读副本）里运行，diff 与判据落文件传路径——省 token，且对无只读沙箱的 CLI（opencode）是硬隔离。
 - 适配器表在 `scripts/agents.mjs`（产品 AgentAdapter registry 的退化形态）；新增一家本地 CLI = 加一条三元组。

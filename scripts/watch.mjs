@@ -27,17 +27,19 @@ const WIP = 'wip';
 // --- 参数 ---
 const argv = process.argv.slice(2);
 if (argv.includes('-h') || argv.includes('--help')) {
-  console.log('用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder claude] [--label ready] [--once] [--dry-run]');
+  console.log('用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder codex] [--reviewer codex] [--label ready] [--once] [--dry-run]');
   process.exit(0);
 }
 const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
 const INTERVAL = Math.max(5, Number(opt('--interval', 30))) * 1000;
 const MAX = Math.max(1, Number(opt('--max', 2)));
 const LABEL = opt('--label', 'ready');
-const BUILDER = opt('--builder', AGENTS[0]); // issue 没打 agent:build:* 时的缺省 builder
+const BUILDER = opt('--builder', AGENTS[0]);   // issue 没打 agent:build:* 时的缺省 builder
+const REVIEWER = opt('--reviewer', AGENTS[0]); // issue/PR 没打 agent:review:* 时的缺省 reviewer（label 优先）
 const ONCE = argv.includes('--once');
 const DRY = argv.includes('--dry-run');
 if (!AGENTS.includes(BUILDER)) { console.error(`未知缺省 builder「${BUILDER}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
+if (!AGENTS.includes(REVIEWER)) { console.error(`未知缺省 reviewer「${REVIEWER}」，可选：${AGENTS.join(' / ')}`); process.exit(1); }
 
 // --- 单实例锁（PID 探活；锁文件在 .git/ 下，不入库）---
 const GIT_DIR = execFileSync('git', ['rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
@@ -157,10 +159,10 @@ function seedPass() {
 }
 
 // --- build：dispatch（重试环）→ 开 PR → 自动顾问评审（复用同一并发槽，串行）---
-function startBuild(num, builderLabel, change) {
+function startBuild(num, builderLabel, reviewerLabel, change) {
   const args = builderLabel ? [String(num)] : [String(num), BUILDER];
   const child = runScript(num, 'dispatch.mjs', args, (code) => {
-    if (code === 0) return startReview(num, change);
+    if (code === 0) return startReview(num, reviewerLabel, change);
     inflight.delete(num);
     log(`✗ #${num} dispatch 退出码 ${code} —— 打 needs-human（dispatch 卡住协议已留痕时此操作幂等）`);
     flagHuman(num);
@@ -170,7 +172,7 @@ function startBuild(num, builderLabel, change) {
   log(`起跑 #${num}（build · ${builderLabel || BUILDER}，在跑 ${inflight.size}/${MAX}）`);
 }
 
-function startReview(num, change) {
+function startReview(num, reviewerLabel, change) {
   let pr = null;
   try {
     pr = JSON.parse(gh(['pr', 'list', '--head', `issue/${num}`, '--state', 'open',
@@ -183,7 +185,9 @@ function startReview(num, change) {
     maybeExit();
     return;
   }
-  const child = runScript(num, 'review.mjs', [String(pr.number)], (code) => {
+  // label 优先：issue 打了 agent:review:* 就让 review.mjs 自己解析；否则传缺省 reviewer
+  const args = reviewerLabel ? [String(pr.number)] : [String(pr.number), REVIEWER];
+  const child = runScript(num, 'review.mjs', args, (code) => {
     inflight.delete(num);
     clearWip(num);
     log(code === 0
@@ -222,6 +226,7 @@ function poll() {
     const labels = it.labels.map((l) => l.name);
     const change = labels.find((n) => n.startsWith('change:'));
     const builderLabel = agentFromLabels(labels, 'build');
+    const reviewerLabel = agentFromLabels(labels, 'review');
     const mode = change || builderLabel ? 'build' : 'propose';
     if (change && [...inflight.values()].some((v) => v.change === change)) {
       log(`跳过 #${it.number}：同 change「${change}」有任务在跑（串行防语义冲突）`);
@@ -247,7 +252,7 @@ function poll() {
       continue;
     }
     claim(it.number); // 认领：起跑前摘 label，避免并发双开 / 下一轮重复捡
-    if (mode === 'build') startBuild(it.number, builderLabel, change);
+    if (mode === 'build') startBuild(it.number, builderLabel, reviewerLabel, change);
     else startPropose(it.number);
   }
 }
@@ -267,7 +272,7 @@ process.on('SIGINT', () => {
 });
 
 // --- 主循环 ---
-log(`启动：label=${LABEL} 并发=${MAX} 缺省builder=${BUILDER} 间隔=${INTERVAL / 1000}s pid=${process.pid}`
+log(`启动：label=${LABEL} 并发=${MAX} 缺省builder=${BUILDER} 缺省reviewer=${REVIEWER} 间隔=${INTERVAL / 1000}s pid=${process.pid}`
   + `${ONCE ? ' --once' : ''}${DRY ? ' --dry-run' : ''}`);
 log(`流程：ready → 提案（无 change/agent:build）或实现（有）；提案 merge → 自动播种；PR 自动顾问评审；merge 由你终审`);
 recoverOrphans();

@@ -2,20 +2,21 @@
 // Agent 适配器注册表 —— 本项目产品里 AgentAdapter registry 的退化（单机、单节点、纯本地）形态。
 // 每个本地 CLI 知道自己怎么当 builder（可写工作区、自行 commit）或 reviewer（只读分析，产出交给脚本上报）。
 // 新增一家本地 CLI = 在 ADAPTERS 里加一条三元组。云通道不在此文件（已按 D9 移出执行面）。
+// 注意：键序即缺省优先序——AGENTS[0] 是 watch/propose 未指定时的缺省 agent。
 import { execFileSync, spawnSync } from 'node:child_process';
 
 export const ADAPTERS = {
+  codex: {
+    displayName: 'Codex CLI',
+    build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', prompt]],
+    review: (prompt) => ['codex', ['exec', '--sandbox', 'read-only', prompt]],
+  },
   claude: {
     displayName: 'Claude Code',
     // 无头 builder 预设 auto-approve（PRD §3.2 共性）：acceptEdits 只放行编辑、Bash 全被审批墙挡住，
     // agent 连自测/validate 都跑不了。安全 = worktree 隔离 + 平台门禁 + repo deny hooks。
     build: (prompt) => ['claude', ['-p', prompt, '--permission-mode', 'bypassPermissions']],
     review: (prompt) => ['claude', ['-p', prompt, '--permission-mode', 'plan']], // plan = 只读
-  },
-  codex: {
-    displayName: 'Codex CLI',
-    build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', prompt]],
-    review: (prompt) => ['codex', ['exec', '--sandbox', 'read-only', prompt]],
   },
   opencode: {
     displayName: 'OpenCode',
