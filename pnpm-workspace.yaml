@@ -1,0 +1,11 @@
+packages:
+  - shared
+  - server
+  - web
+  - desktop
+  - examples
+
+allowBuilds:
+  electron: true
+  esbuild: true
+  msw: false
