@@ -6,10 +6,9 @@ packages:
   - examples
 
 allowBuilds:
-  electron: true
   esbuild: true
   msw: false
 
-# Hard-fail installs on unsupported Node instead of warning: electron's postinstall
-# breaks silently under out-of-range Node (exits 0 without extracting the binary).
+# Hard-fail installs on unsupported Node instead of warning, so an out-of-range
+# Node stops at install time rather than surfacing as confusing downstream errors.
 engineStrict: true
