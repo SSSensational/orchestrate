@@ -61,3 +61,9 @@ acceptance/** 对 builder 可读（公开 repo，无法 held-out）；test-guard
 **形态**：产品是本机 Electron 桌面 app，P1 起即以此形态交付 checkpoint。壳保持"薄"——只管窗口、server 进程生命周期与打包；orchestrator 仍是独立 Node 进程（Hono HTTP+WS，嵌入式 SQLite），业务逻辑不进 Electron 主进程。理由：形态即产品身份，但独立进程保住可独立测试、浏览器调试与 better-sqlite3 原生模块的隔离，架构不为壳付代价。
 **路线**：Visual Authoring（可拖拽编辑画布）从 Phase 4 提前到 Phase 2——编排编辑体验是产品核心，优先于多 agent 覆盖；多 agent 并行 + 工具通道顺延 Phase 3，Human Gate + 恢复顺延 Phase 4。P1 的 UI 是只读画布（React Flow：节点状态着色 + 实时流），不含编辑。
 **adapter**：第一条通道选 Codex `app-server`（JSON-RPC over stdio，支持 thread/resume 与审批 RPC，PRD §3.1/§3.2），事件归一化测试以 Codex 真实录制输出为准。
+
+## D15 advisor-review 存在性门禁 + 评审硬超时
+
+顾问评审的 verdict 仍非门禁（D9 不变），但「顾问评论已存在」升级为第四个 required check：commit status `advisor-review`，`review.mjs` 开审时在 PR head SHA 挂 pending、评论发出置绿——按 SHA 生效，复修 push 出新 head 后需新一轮评论才再次置绿。堵的缝隙：三个确定性检查一两分钟即全绿，而带实机验证的评审要十几分钟，人手快就会在顾问意见落地前 merge，且首次 `CHANGES` 的自动复修环会被提前 merge 作废。卡的是「评论存在」这一确定性事实，不是 LLM 判断——与门禁去 LLM 化（D9）不矛盾。
+逃生口保证 fail-open，挂死的 LLM 不得阻塞流水线：评审超时（缺省 20 分钟，`REVIEW_TIMEOUT_MINUTES` 可调）、无输出、缺 VERDICT 一律自动置绿 + PR 打 `needs-human`；`review.mjs` 自身崩死由 watch 兜底放行。status 由人的 gh 身份写（记账类，D13）。
+配套根治评审僵尸：reviewer 子进程以独立进程组运行（agent CLI 会再拉 shell / MCP server 孙进程），超时按 SIGTERM → 10s 宽限 → SIGKILL 整树击杀；宿主 `review.mjs` 收到 SIGTERM/SIGINT 时同样整树击杀后退出，不留孤儿。

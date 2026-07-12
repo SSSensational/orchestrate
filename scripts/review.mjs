@@ -3,7 +3,8 @@
 //
 // 用指定 reviewer 评审 PR（读码 + 在一次性 worktree 里实机执行验证），产出 = 顾问意见（发为 PR 评论）。
 // reviewer 由 label `agent:review:<x>` 指定；缺省取「异于 builder」的一家（异厂商第二意见）。
-// 重要：这是顾问，不是必过门禁。必过的是确定性检查（ci / spec-validate / test-guard），人终审。
+// 重要：verdict 是顾问意见，不是必过门禁。但「评论已存在」是 required check（commit status
+// `advisor-review`，D15）：开审挂 pending、评论发出置绿；超时 / 失败走逃生口自动放行 + needs-human。
 //
 // 评审经济学（抄 Superpowers v6 的实测教训，来源见 ai-native-build「来源」节）：
 // - reviewer 在 PR head 的临时 detached worktree 里跑：能读实现后的完整代码，也能实机执行
@@ -16,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ADAPTERS, AGENTS, agentFromLabels, agentGhEnv, ghAgent, resolve, runCapture, gh } from './agents.mjs';
+import { ADAPTERS, AGENTS, agentFromLabels, agentGhEnv, ghAgent, resolve, runCapture, gh, setAdvisorStatus } from './agents.mjs';
 import { REVIEW_CHANGES_EXIT, parseReviewVerdict, selectReviewer } from './review-policy.mjs';
 
 const [prNum, override] = process.argv.slice(2);
@@ -25,6 +26,17 @@ if (!prNum) {
   process.exit(1);
 }
 agentGhEnv();
+
+// 评审硬超时（D15）：LLM 评审会挂死（无输出也不退出），超时整树击杀。0 = 不限时。
+const rawTimeout = Number(process.env.REVIEW_TIMEOUT_MINUTES ?? 20);
+const TIMEOUT_MIN = Number.isFinite(rawTimeout) && rawTimeout >= 0 ? rawTimeout : 20;
+
+// 逃生口（D15）：评审没产出评论（超时 / 无输出 / 缺 VERDICT）→ advisor-review 置绿放行 +
+// PR 打 needs-human 提醒人工看一眼。门禁只保证「评论存在或已明确放弃」——挂死的 LLM 不得堵住流水线。
+function escapeGate(reason) {
+  try { setAdvisorStatus(prNum, 'success', `${reason}——顾问非门禁，自动放行`); } catch { /* fail-open */ }
+  try { gh(['pr', 'edit', prNum, '--add-label', 'needs-human']); } catch { /* label 缺失或离线 */ }
+}
 
 const pr = JSON.parse(gh(['pr', 'view', prNum, '--json', 'title,body,labels,number']));
 const prLabels = pr.labels.map((l) => l.name);
@@ -89,27 +101,48 @@ const prompt = [
   '记住：你是顾问第二意见，不是必过门禁——确定性检查(ci/spec-validate/test-guard)与人的终审才是关卡。',
 ].join('\n');
 
+// 门禁挂 pending：卡「顾问评论已存在」，不卡结论（D15）。fail-open——status API 失败不阻塞评审本身。
+try { setAdvisorStatus(prNum, 'pending', `顾问评审进行中（${ADAPTERS[agent].displayName}）`); }
+catch (e) { console.warn(`⚠ advisor-review 置 pending 失败（不阻塞）：${e.message}`); }
+
 let text = '';
 let status = 0;
+let timedOut = false;
 try {
-  console.log(`\n== reviewer：${ADAPTERS[agent].displayName}  ·  PR #${prNum}  ·  ${wtDir}\n`);
-  const r = runCapture(resolve(agent, 'review', prompt), wtDir);
+  console.log(`\n== reviewer：${ADAPTERS[agent].displayName}  ·  PR #${prNum}  ·  ${wtDir}${TIMEOUT_MIN ? `  ·  限时 ${TIMEOUT_MIN}min` : ''}\n`);
+  const r = await runCapture(resolve(agent, 'review', prompt), wtDir, { timeoutMs: TIMEOUT_MIN * 60_000 });
   status = r.status;
+  timedOut = r.timedOut;
   text = (r.stdout || '').trim();
 } finally {
   try { execFileSync('git', ['worktree', 'remove', '--force', wtDir]); } catch { /* 兜底：git worktree prune */ }
   try { rmSync(scratch, { recursive: true, force: true }); } catch { /* ignore */ }
 }
-if (!text) { console.error(`reviewer 无输出（退出码 ${status}）——未发评论。`); process.exit(1); }
+if (timedOut) {
+  escapeGate(`评审超时（${TIMEOUT_MIN} 分钟）已整树终止`);
+  console.error(`reviewer 超时（${TIMEOUT_MIN} 分钟）——已整树终止，未发评论；advisor-review 已放行 + needs-human。`);
+  process.exit(1);
+}
+if (!text) {
+  escapeGate(`reviewer 无输出（退出码 ${status}）`);
+  console.error(`reviewer 无输出（退出码 ${status}）——未发评论。`);
+  process.exit(1);
+}
 
 const verdict = parseReviewVerdict(text);
-if (!verdict) { console.error('reviewer 输出缺少 VERDICT: PASS/CHANGES——未发评论。'); process.exit(1); }
+if (!verdict) {
+  escapeGate('reviewer 输出缺少 VERDICT');
+  console.error('reviewer 输出缺少 VERDICT: PASS/CHANGES——未发评论。');
+  process.exit(1);
+}
 const changes = verdict === 'changes';
 const header =
   `**顾问评审 · ${ADAPTERS[agent].displayName}（本地 CLI）**  ` +
   `— 非必过门禁；必过 = ci / spec-validate / test-guard，人终审。\n\n`;
 // 用 pr comment 而非 pr review：自评自审的 PR 上 review 会被 GitHub 拒（不能 approve/request-changes 自己的 PR）。
 ghAgent(['pr', 'comment', prNum, '--body', header + text]); // 顾问评审 = AI 产出，有 bot token 时以 bot 身份发
+try { setAdvisorStatus(prNum, 'success', `顾问评论已发布（VERDICT: ${changes ? 'CHANGES' : 'PASS'}）——门禁只看评论存在`); }
+catch (e) { console.warn(`⚠ advisor-review 置绿失败：${e.message}——评论已发出，可重跑本脚本或手动补 status`); }
 console.log(`\n已发表顾问评审评论（VERDICT: ${changes ? 'CHANGES' : 'PASS'}）。合并与否由你终审。`);
 if (changes) {
   console.log('提示（教训闸轮）：若发现具有普适性，开 `type:decision` issue 记录，或合并后提炼进 AGENTS.md（人审）——见 operations「修复与学习」。');

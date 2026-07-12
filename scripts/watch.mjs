@@ -19,7 +19,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { agentFromLabels, agentGhEnv, AGENTS, gh, ghAgent } from './agents.mjs';
+import { agentFromLabels, agentGhEnv, AGENTS, gh, ghAgent, setAdvisorStatus } from './agents.mjs';
 import { firstOpenIssueNumber } from './watch-order.mjs';
 import { reviewStep } from './review-policy.mjs';
 
@@ -225,7 +225,9 @@ function startReview(num, builder, reviewerLabel, change, revisionRound) {
       prNote(pr.number, '复修后复审仍为 CHANGES——自动循环已停止（复修/复审封顶一轮，D12），等待人终审处理。');
     } else {
       log(`✓ #${num} → PR #${pr.number} 已开；⚠ 顾问评审失败（退出码 ${code}），顾问非门禁`);
-      prNote(pr.number, `顾问评审运行失败（退出码 ${code}）——顾问非门禁，本 PR 照常等待 required checks 与人终审。`);
+      // 兜底逃生口（D15）：review.mjs 若在自置状态前崩死，这里放行 advisor-review，不留永久 pending
+      try { setAdvisorStatus(pr.number, 'success', `顾问评审运行失败（退出码 ${code}）——顾问非门禁，自动放行`); } catch { /* fail-open */ }
+      prNote(pr.number, `顾问评审运行失败（退出码 ${code}）——advisor-review 已自动放行，本 PR 照常等待其余 required checks 与人终审。`);
     }
     maybeExit();
   });
