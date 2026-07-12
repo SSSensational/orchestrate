@@ -29,7 +29,7 @@
 
 - 执行者是本机 CLI（Claude Code / Codex / OpenCode），经 `gh` 留痕；**无云 agent、无 CI 内跑模型**（决策 D9）。
 - 每个 issue 用 label 选人（可不同、非固定）：`agent:build:<claude|codex|opencode>`（谁实现）+ `agent:review:<...>`（谁做顾问评审）。缺省 builder = codex；未指定 reviewer 时自动选择异于 builder 的 agent。
-- 触发：常驻 `node scripts/watch.mjs` 是全链入口（issue 打 `ready` → 自动提案 / 播种 / 派发 / 顾问评审，首次 `VERDICT: CHANGES` 自动回喂原 builder 复修一次并复审一次；人只审提案与终审 merge，见决策 D12）。底层脚本可单独手动跑（调试 / 接管）：`dispatch.mjs <issue#>`（builder → 本地确定性检查回喂环 ≤3 次 → 开 PR；仍不绿自动记卡点 + needs-human，D10）、`review.mjs <PR#>`（reviewer 在 PR head 的一次性 worktree 里读码 + 实机验证后评审 → 发顾问评论）。自动化必须设置 `AGENT_GH_TOKEN`，缺失时 fail-closed，不回落人的 `gh` 身份。适配器表见 `scripts/agents.mjs`。
+- 触发：常驻 `node scripts/watch.mjs` 是全链入口（issue 打 `ready` → 自动提案 / 播种 / 派发 / 顾问评审，首次 `VERDICT: CHANGES` 自动回喂原 builder 复修一次并复审一次；人只审提案与终审 merge，见决策 D12）。底层脚本可单独手动跑（调试 / 接管）：`dispatch.mjs <issue#>`（builder → 本地确定性检查回喂环 ≤3 次 → 开 PR；仍不绿自动记卡点 + needs-human，D10）、`review.mjs <PR#>`（reviewer 在 PR head 的一次性 worktree 里读码 + 实机验证后评审 → 发顾问评论，并维护 `advisor-review` 存在性门禁与评审硬超时，D15）。自动化必须设置 `AGENT_GH_TOKEN`，缺失时 fail-closed，不回落人的 `gh` 身份。适配器表见 `scripts/agents.mjs`。
 
 ## 工作纪律
 
@@ -44,4 +44,4 @@
 
 ## Definition of Done
 
-required checks 全绿（**ci + spec-validate + test-guard**，均确定性）+ 对应 spec 已同步 + PR 描述完整。跨 agent 的 review / verify 是**顾问意见、非门禁**。merge 由**人**终审执行，不由你执行。注意：验收判据先于实现存在、`acceptance/` 由 test-writer 拥有——实现必须真实可运行到验收测试转绿，糊弄测试没有意义（宪法第 2、10 条）。
+required checks 全绿（**ci + spec-validate + test-guard + advisor-review**，均确定性）+ 对应 spec 已同步 + PR 描述完整。跨 agent 的 review / verify 是**顾问意见、非门禁**——`advisor-review` 卡的只是「顾问评论已存在」这一确定性事实（评审超时 / 失败自动放行 + `needs-human`，D15），评审结论不阻塞合并。merge 由**人**终审执行，不由你执行。注意：验收判据先于实现存在、`acceptance/` 由 test-writer 拥有——实现必须真实可运行到验收测试转绿，糊弄测试没有意义（宪法第 2、10 条）。

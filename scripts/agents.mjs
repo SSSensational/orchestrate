@@ -4,7 +4,7 @@
 // 里读码 + 实机执行验证命令，产出交给脚本上报——见 review.mjs）。
 // 新增一家本地 CLI = 在 ADAPTERS 里加一条三元组。云通道不在此文件（已按 D9 移出执行面）。
 // 注意：键序即缺省优先序——AGENTS[0] 是 watch/propose 未指定时的缺省 agent。
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 
 export const ADAPTERS = {
   codex: {
@@ -81,15 +81,53 @@ export function runLive([cmd, args], cwd, env) {
   return r.status ?? 0;
 }
 
-// 捕获跑（reviewer）：拿 stdout 当评审产出，由调用方上报到 GitHub
-export function runCapture([cmd, args], cwd) {
-  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  if (r.error) throw new Error(`启动 ${cmd} 失败：${r.error.message}（是否已安装并在 PATH？）`);
-  return { status: r.status ?? 0, stdout: r.stdout || '', stderr: r.stderr || '' };
+// 捕获跑（reviewer）：拿 stdout 当评审产出，由调用方上报到 GitHub。
+// detached 起独立进程组：agent CLI 会再拉 shell / MCP server 孙进程，只杀直接子进程会留孤儿——
+// 超时（SIGTERM → 10s 宽限 → SIGKILL）与宿主被杀（SIGTERM/SIGINT 转发）都整树击杀，评审不产僵尸。
+export function runCapture([cmd, args], cwd, { timeoutMs = 0 } = {}) {
+  return new Promise((done, fail) => {
+    const child = spawn(cmd, args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.on('error', (e) => fail(new Error(`启动 ${cmd} 失败：${e.message}（是否已安装并在 PATH？）`)));
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (c) => { stdout += c; });
+    child.stderr.on('data', (c) => { stderr += c; });
+    const killTree = (sig) => { try { process.kill(-child.pid, sig); } catch { /* 已退出 */ } };
+    let timedOut = false;
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        killTree('SIGTERM');
+        setTimeout(() => killTree('SIGKILL'), 10_000).unref();
+      }, timeoutMs)
+      : null;
+    const onHostSignal = () => { killTree('SIGKILL'); process.exit(143); };
+    process.once('SIGTERM', onHostSignal);
+    process.once('SIGINT', onHostSignal);
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      process.removeListener('SIGTERM', onHostSignal);
+      process.removeListener('SIGINT', onHostSignal);
+      done({ status: code ?? 0, stdout, stderr, timedOut });
+    });
+  });
 }
 
 export function gh(args, opts = {}) {
   return execFileSync('gh', args, { encoding: 'utf8', ...opts });
+}
+
+// advisor-review 存在性门禁（D15）：required commit status，卡「顾问评论已存在（或已明确放弃）」，
+// 不卡结论——verdict 永远是顾问意见。SHA 现查现用：复修 push 出新 head 后需新一轮评论才置绿。
+// commit status 是记账类操作，走人的 gh 身份（D13）。
+export const ADVISOR_CONTEXT = 'advisor-review';
+export function setAdvisorStatus(prNum, state, description) {
+  const sha = JSON.parse(gh(['pr', 'view', String(prNum), '--json', 'headRefOid'])).headRefOid;
+  gh(['api', `repos/{owner}/{repo}/statuses/${sha}`,
+    '-f', `state=${state}`, '-f', `context=${ADVISOR_CONTEXT}`,
+    '-f', `description=${description.slice(0, 140)}`]);
 }
 
 // AI 产出的 GitHub 对象（开 PR / 发评论 / 播种 issue）只走机器人账号身份。

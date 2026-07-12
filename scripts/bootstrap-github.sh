@@ -43,9 +43,9 @@ done
 
 # 5) branch protection（main）：required checks + CODEOWNERS 人审
 gh api -X PUT "repos/${OWNER}/${REPO_NAME}/branches/main/protection" --input - <<'JSON' \
-  || echo "!! branch protection 设置失败——请在 Settings→Branches 手工配置：required checks = ci / spec-validate / test-guard（均确定性）；勾选 Require review from Code Owners"
+  || echo "!! branch protection 设置失败——请在 Settings→Branches 手工配置：required checks = ci / spec-validate / test-guard / advisor-review；勾选 Require review from Code Owners"
 {
-  "required_status_checks": { "strict": false, "contexts": ["ci", "spec-validate", "test-guard"] },
+  "required_status_checks": { "strict": false, "contexts": ["ci", "spec-validate", "test-guard", "advisor-review"] },
   "enforce_admins": false,
   "required_pull_request_reviews": { "require_code_owner_reviews": true, "required_approving_review_count": 0 },
   "restrictions": null,
@@ -55,7 +55,8 @@ gh api -X PUT "repos/${OWNER}/${REPO_NAME}/branches/main/protection" --input - <
 JSON
 
 echo ""
-echo "== 完成。required checks 全为确定性检查（ci / spec-validate / test-guard）——无需任何 Secret。"
+echo "== 完成。required checks 全为确定性检查（ci / spec-validate / test-guard + advisor-review 存在性门禁）——无需任何 Secret。"
+echo "== advisor-review 卡的是「顾问评论已存在」（review.mjs 挂 pending / 置绿），不卡评审结论；超时/失败自动放行 + needs-human（D15）。"
 echo "== 剩余手工步骤："
 echo "  1. 本机装好要用的 CLI：claude / codex / opencode，并各自登录（用你的订阅/凭证，成本走本地）"
 echo "  2. 起常驻进程 node scripts/watch.mjs（只由人启动），之后开 issue 打 ready 即全链自动"
