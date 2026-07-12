@@ -18,3 +18,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # Real GUI gate: boots the actual Electron shell (headless via xvfb) and asserts
+      # single isolated window + renderer ready. Catches install/runtime failures
+      # (blocked postinstall, CSP blocking the renderer) that static checks cannot.
+      - run: xvfb-run -a pnpm desktop:smoke
