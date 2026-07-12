@@ -1,0 +1,15 @@
+packages:
+  - shared
+  - server
+  - web
+  - desktop
+  - examples
+
+allowBuilds:
+  electron: true
+  esbuild: true
+  msw: false
+
+# Hard-fail installs on unsupported Node instead of warning: electron's postinstall
+# breaks silently under out-of-range Node (exits 0 without extracting the binary).
+engineStrict: true

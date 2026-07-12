@@ -9,20 +9,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: detect source
-        id: detect
-        run: |
-          if [ -f package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
-      - if: steps.detect.outputs.present == 'true'
-        uses: pnpm/action-setup@v4
-      - if: steps.detect.outputs.present == 'true'
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - if: steps.detect.outputs.present == 'true'
-        run: pnpm install --frozen-lockfile
-      - if: steps.detect.outputs.present == 'true'
-        run: pnpm typecheck && pnpm lint && pnpm test
-      - if: steps.detect.outputs.present == 'false'
-        run: echo "no source yet — ci passes vacuously"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      # Real GUI gate: boots the actual Electron shell (headless via xvfb) and asserts
+      # single isolated window + renderer ready. Catches install/runtime failures
+      # (blocked postinstall, CSP blocking the renderer) that static checks cannot.
+      # Ubuntu 24.04 restricts unprivileged user namespaces, which forces Electron onto
+      # the SUID sandbox helper (impossible inside node_modules) — lift the restriction
+      # so Chromium's userns sandbox works and the smoke runs fully sandboxed.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: xvfb-run -a pnpm desktop:smoke
