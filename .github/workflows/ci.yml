@@ -21,4 +21,8 @@ jobs:
       # Real GUI gate: boots the actual Electron shell (headless via xvfb) and asserts
       # single isolated window + renderer ready. Catches install/runtime failures
       # (blocked postinstall, CSP blocking the renderer) that static checks cannot.
+      # Ubuntu 24.04 restricts unprivileged user namespaces, which forces Electron onto
+      # the SUID sandbox helper (impossible inside node_modules) — lift the restriction
+      # so Chromium's userns sandbox works and the smoke runs fully sandboxed.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: xvfb-run -a pnpm desktop:smoke
