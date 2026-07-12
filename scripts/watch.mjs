@@ -127,7 +127,7 @@ function recoverOrphans() {
 
 // --- 播种：提案 merge 后，openspec/changes/ 里出现还没有对应 issue 的 change ---
 function proposalMeta(change) {
-  // milestone / phase 取自提案 PR（proposal: <change>）Refs 的源需求 issue；找不到就不挂
+  // milestone / phase / 父 issue 取自提案 PR（proposal: <change>）Refs 的源需求 issue；找不到就不挂
   try {
     const prs = JSON.parse(gh(['pr', 'list', '--state', 'merged', '--search', `proposal: ${change} in:title`,
       '--json', 'body', '--limit', '1']));
@@ -135,6 +135,7 @@ function proposalMeta(change) {
     if (!refs) return {};
     const iv = JSON.parse(gh(['issue', 'view', refs[1], '--json', 'milestone,labels']));
     return {
+      source: Number(refs[1]), // 源需求 issue——播种出的实现 issues 挂为它的 sub-issues
       milestone: iv.milestone?.title,
       phase: (iv.labels || []).map((l) => l.name).find((n) => n.startsWith('phase:')),
     };
@@ -158,11 +159,12 @@ function seedPass() {
     } catch { continue; }
     if (seeded.length) continue;
     if (DRY) { log(`[dry-run] 会播种 change ${change}`); continue; }
-    const { milestone, phase } = proposalMeta(change);
-    log(`播种 change ${change}${milestone ? ` → milestone「${milestone}」` : ''}`);
+    const { source, milestone, phase } = proposalMeta(change);
+    log(`播种 change ${change}${milestone ? ` → milestone「${milestone}」` : ''}${source ? `（挂为 #${source} 的 sub-issues）` : ''}`);
     try {
       execFileSync(process.execPath,
-        [join(SCRIPTS, 'seed-issues.mjs'), change, milestone || '-', ...(phase ? [phase] : [])],
+        [join(SCRIPTS, 'seed-issues.mjs'), change, milestone || '-', phase || '-',
+          ...(source ? [String(source)] : [])],
         { stdio: 'inherit' });
     } catch (e) { log(`✗ 播种 ${change} 失败：${e.message}——下轮重试`); }
   }
