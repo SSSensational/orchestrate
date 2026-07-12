@@ -1,0 +1,28 @@
+{
+  "name": "agent-workflow-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22 <23",
+    "pnpm": "11.9.0"
+  },
+  "scripts": {
+    "build": "pnpm --recursive build",
+    "typecheck": "pnpm --recursive typecheck",
+    "lint": "pnpm --recursive lint",
+    "test": "vitest run --config vitest.config.ts && node --test scripts/*.test.mjs",
+    "acceptance": "vitest run --config vitest.acceptance.config.ts --passWithNoTests",
+    "desktop:smoke": "pnpm build && pnpm --filter @agent-workflow/desktop smoke"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@types/node": "25.5.0",
+    "eslint": "9.39.4",
+    "globals": "16.5.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.58.1",
+    "vitest": "4.1.0"
+  }
+}
