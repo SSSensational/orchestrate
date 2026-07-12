@@ -55,3 +55,9 @@ acceptance/** 对 builder 可读（公开 repo，无法 held-out）；test-guard
 
 **git 层**：dispatch/propose 给整个 builder 会话与兜底提交注入 `GIT_AUTHOR_* / GIT_COMMITTER_*`（Claude / Codex / OpenCode 各自的 noreply 署名）——谁干活谁署名，无需任何账号；人的 git 身份只出现在人自己的提交与 merge。
 **GitHub 层**：评论 / PR / issue 的显示身份 = 认证账号，无法伪装。`AGENT_GH_TOKEN`（机器人账号 PAT，repo write、须为 collaborator）是自动化必需项；`watch.mjs` / `propose.mjs` / `seed-issues.mjs` / `dispatch.mjs` / `review.mjs` 启动即校验，缺失时 fail-closed，绝不回落人的 `gh` 登录态。AI 产出的对象（开 PR、顾问评审评论、卡点评论、播种 issue）以 bot 身份创建；记账操作（label、查询、push）仍走人的身份。附带收益：bot 开的 PR 人可正常 approve——GitHub 禁止自批自己开的 PR，此前 CODEOWNERS 审查在自开 PR 上无法形式化满足。bot 账号只有一个：per-agent 的署名粒度在 commit author 与评论正文头部，不在账号层（多账号违反 GitHub ToS 且徒增凭据管理）。
+
+## D14 产品形态：Electron 薄壳桌面 app；画布编排提前；首条 adapter 走 Codex
+
+**形态**：产品是本机 Electron 桌面 app，P1 起即以此形态交付 checkpoint。壳保持"薄"——只管窗口、server 进程生命周期与打包；orchestrator 仍是独立 Node 进程（Hono HTTP+WS，嵌入式 SQLite），业务逻辑不进 Electron 主进程。理由：形态即产品身份，但独立进程保住可独立测试、浏览器调试与 better-sqlite3 原生模块的隔离，架构不为壳付代价。
+**路线**：Visual Authoring（可拖拽编辑画布）从 Phase 4 提前到 Phase 2——编排编辑体验是产品核心，优先于多 agent 覆盖；多 agent 并行 + 工具通道顺延 Phase 3，Human Gate + 恢复顺延 Phase 4。P1 的 UI 是只读画布（React Flow：节点状态着色 + 实时流），不含编辑。
+**adapter**：第一条通道选 Codex `app-server`（JSON-RPC over stdio，支持 thread/resume 与审批 RPC，PRD §3.1/§3.2），事件归一化测试以 Codex 真实录制输出为准。
