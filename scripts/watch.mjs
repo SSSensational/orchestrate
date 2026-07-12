@@ -105,9 +105,10 @@ const clearWip = (num) => { try { gh(['issue', 'edit', String(num), '--remove-la
 const flagHuman = (num) => { try { gh(['issue', 'edit', String(num), '--remove-label', WIP, '--add-label', 'needs-human']); } catch { /* ignore */ } };
 
 // 自动循环的交人终态在 PR 留简短交接评论（bot 身份）——不在终端旁边的人（手机）也能看到
-// "自动化已停、在等人"。fail-open：留言失败只记日志，不阻塞主流程（留痕是可视性，非门禁）。
+// "自动化已停、在等人"。fail-open：留言失败或超时只记日志，不阻塞主流程（留痕是可视性，非门禁）；
+// 超时防 gh 网络卡死冻结 watch 主循环。
 function prNote(prNum, body) {
-  try { ghAgent(['pr', 'comment', String(prNum), '--body', `**watch**：${body}`]); }
+  try { ghAgent(['pr', 'comment', String(prNum), '--body', `**watch**：${body}`], { timeout: 30_000 }); }
   catch (e) { log(`（PR #${prNum} 交接留言失败：${e.message}）`); }
 }
 
@@ -190,8 +191,8 @@ function startRevision(num, builder, reviewerLabel, change, pr, revisionRound) {
     if (code === 0) return startReview(num, builder, reviewerLabel, change, revisionRound);
     inflight.delete(num);
     log(`✗ #${num} 顾问复修失败（dispatch 退出码 ${code}）——打 needs-human`);
+    flagHuman(num); // 先完成状态打标，再留言——评论说"已打 needs-human"时必须已成事实
     prNote(pr.number, `顾问复修派发失败（dispatch 退出码 ${code}）——自动循环已停止，issue #${num} 已打 needs-human，等待人接管。`);
-    flagHuman(num);
     maybeExit();
   });
   inflight.set(num, { child, change });
