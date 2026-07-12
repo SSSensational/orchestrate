@@ -160,6 +160,7 @@ function seedPass() {
     if (seeded.length) continue;
     if (DRY) { log(`[dry-run] 会播种 change ${change}`); continue; }
     const { source, milestone, phase } = proposalMeta(change);
+    if (!source) log(`⚠ change ${change} 未解析到源需求 issue（提案缺 Refs 或查询失败）——本次播种不挂 sub-issues`);
     log(`播种 change ${change}${milestone ? ` → milestone「${milestone}」` : ''}${source ? `（挂为 #${source} 的 sub-issues）` : ''}`);
     try {
       execFileSync(process.execPath,
