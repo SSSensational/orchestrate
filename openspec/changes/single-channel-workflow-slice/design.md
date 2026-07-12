@@ -1,40 +1,85 @@
 # Design: 单通道 Agent Workflow 最小纵向切片
 
-本 change 的技术形态几乎全部由 PRD 已取证的结论决定（PRD §2–§16 引用官方文档）。本文只记录 **Phase 1 的收窄取舍** 及其来源，不复述 PRD。
+## Context
 
-## 决策 1：第一个 adapter 走 Claude Code 原生无头通道
+仓库当前只有流程基建，没有 product workspace，也没有 `openspec/specs/**` living spec（D2 要求 greenfield 从空开始）。因此本 change 同时建立 `build-pipeline`、`workflow-ir`、`agent-adapter`、`run-execution`、`run-ui` 五个 capability；跨 capability 的行为合同暂由本 change 的对应 delta specs 定义，归档后才成为 living specs。
 
-- **选择**：`claude -p --output-format stream-json --input-format stream-json --verbose --permission-mode ...`，prompt 走 stdin 的 stream-json 帧（独立线程写入防 stdio 死锁），session id 从 `system`/`result` 事件捕获。
-- **来源**：PRD §3.1 表（官方文档核实的三家 CLI 无头通道）与 §3.2 策略 B 的实测要点（claude 一行）。需求正文点名「首选 Claude Code 原生通道」。
-- **理由**：策略 B（per-CLI 原生通道）比策略 A（ACP 社区适配器）更贴官方能力，且 Phase 1 只需一条最顺手通道跑通（PRD §3.2 取舍：「Phase 1 从一条最顺手的原生通道起步」）。
-- **假设**：本机已安装并登录 Claude Code CLI；`probe()` 在执行前确认可用（PRD §14 L3 的雏形）。
+需求以 PRD §5–§16、§19 和 `docs/decisions.md` D14 为产品约束：P1 交付 Electron 薄壳桌面 app；壳只管理窗口、独立 server 子进程的生命周期与后续打包，业务逻辑留在可独立测试和浏览器调试的 Node orchestrator；第一条 adapter 固定为 Codex `app-server`；画布在 P1 只读。本 worktree 基线尚未包含 D14，仓库内取证来自本地 ref `origin/docs/electron-form-factor` 的提交 `ec4054f`；本 change 不越界修改 `docs/**`。
 
-## 决策 2：Phase 1 产出走 final text 兜底，不建 MCP 工具通道
+取证来源：
 
-- **选择**：`agent.run` 节点完成后，把 adapter `AgentResult.finalText` 存为 `report` 类 artifact，`node_run_id` 指向来源节点。
-- **来源**：PRD §7「三级降级」第 3 条明示「兜底 final text 存为 report 类 artifact（Phase 1 先用这个跑通）」；PRD §19 Phase 1 描述「final text 兜底成 artifact」。
-- **理由**：`emit_artifact` MCP 工具通道属 P2（Non-goal）。Phase 1 只需证明「产出可溯源到节点」，final text 兜底足够。`completed + 空 finalText` 是合法结果，但 Phase 1 的示例 prompt 会要求 agent 输出可见文本以便 UI 演示。
+- 仓库内：`docs/PRD.md` §3.1/§3.2、§5–§16、§19；`docs/decisions.md` D5、D9，以及取证提交 `ec4054f` 中的 D14；`docs/constitution.md` 第 2、4、9、10 条。
+- Codex 官方文档：[Codex App Server](https://developers.openai.com/codex/app-server/) 明确默认 stdio transport 使用逐行 JSON，连接必须先 `initialize`/`initialized`，再 `thread/start` 与 `turn/start`；运行期间以 `item/*` 通知流式输出，并以 `turn/completed` 给出终态。
+- Electron 官方文档：[Process Model](https://www.electronjs.org/docs/latest/tutorial/process-model) 将窗口管理归于 main process，并建议通过受限 preload bridge 暴露能力；[Security](https://www.electronjs.org/docs/latest/tutorial/security) 要求 renderer 禁用 Node integration、启用 context isolation 并限制导航。
+- React Flow 官方 API：[ReactFlow component](https://reactflow.dev/api-reference/react-flow) 提供 `nodesDraggable`、`nodesConnectable`、`elementsSelectable` 等显式只读交互开关。
 
-## 决策 3：事件归一化以真实录制 fixture 做表驱动测试
+## Goals / Non-Goals
 
-- **选择**：把一次真实 Claude Code 无头运行的 NDJSON 输出录制为 fixture，表驱动断言其归一化为期望的 `AgentEvent` 序列（`session` / `text_delta` / `tool_call` / `usage` / `raw` 兜底）。
-- **来源**：PRD §6「事件流归一化」要点 + PRD §16「各 adapter 的事件归一化必须有表驱动单测」；PRD §2.5 教训（不要指望解析模型自由文本）。
-- **理由**：事件格式随 CLI 版本漂移，录制 fixture 让归一化回归可判定；无法归类的事件走 `raw` 透传而非报错。
+**Goals:**
 
-## 决策 4：持久化 = SQLite 6 表 + `run_events` 单一事实源
+- 从写死 IR 到真实 Codex 调用、状态推进、SQLite 事件与 artifact、Electron 可视化形成一条可运行纵向链路。
+- 让每个阶段都有确定性、可派生的判据；真实模型调用只用于本地 smoke/demo，不成为 CI 门禁。
+- 保持 IR、执行、事件和 UI 的边界，使 P2 可在不改执行语义的前提下增加画布编辑。
 
-- **选择**：按 PRD §11 建 6 张表；`run_events(run_id, seq)` append-only、seq 每 run 严格递增、无空洞；Phase 1 实际写入 `workflow_runs` / `workflow_node_runs` / `agent_tasks` / `artifacts` / `run_events`（`workflow_definitions` 可选，示例 IR 可直接作为 run 的 `ir_snapshot_json` 冻结）。
-- **来源**：PRD §11 数据模型、§12 事件日志、§15 调度算法。
-- **理由**：一份 append-only 日志同时支撑实时流与（未来的）恢复/回放（PRD §12）。Phase 1 只用到「实时」这一能力，但表结构不为 demo 简化埋雷（PRD §17）。
+**Non-Goals:**
 
-## 决策 5：只读 UI 经 WebSocket + seq 消费实时流
+- 不实现 P2 的画布编辑或 `ui_json` 持久化。
+- 不实现 P3 的多 agent、其他 adapter、MCP artifact 工具通道或 reduce。
+- 不实现 P4 的 gate、环、恢复、重试和回放时间线。
+- 不实现云 task，也不把 Electron main process 变成业务运行时。
 
-- **选择**：后端 Hono 暴露 HTTP 启动 run + WebSocket 推送 `run_events`；断线可带 seq catch-up。UI 展示节点状态（颜色=状态）、agent 实时文本流、最终 artifact。
-- **来源**：PRD §5 架构、§12 事件日志「实时：WS 推送；断线带 seq 重连补发」、§16 UI 布局。
-- **理由**：Phase 1 是「只读」——不含画布编辑（P4）、不含 gate 表单（P3）。text_delta 按 ~500ms 批量落事件（PRD §15）以免 UI 过载。
+## Decisions
 
-## 决策 6：脚手架 task 先行且免验收测试
+### 1. 先建立可运行脚手架，再拆分产品 capability
 
-- **选择**：tasks.md 第一个 task 是工程脚手架 + 三个 required check 真实接线，本身不带 `acceptance/` 测试，靠 CI 判据（fresh-clone install/typecheck/lint/test 成功、ci 非空转）+ 人审兜底；D5 测试分离从第二个 task 起生效。
-- **来源**：需求正文排序约束；决策 D5（vitest 默认排除 acceptance/、`pnpm acceptance` 单列、ci 增加 per-issue acceptance check `--grep "#<n>"`）。
-- **理由**：`acceptance/**` 由 test-writer 从判据派生，但脚手架的判据是「工具链与门禁本身可运行」，天然由 CI 可观察状态证实，不需要独立测试文件。
+Task 1 一次性建立 `/shared`、`/server`、`/web`、`/desktop`、`/examples` 工作区、TypeScript strict、lint、vitest 测试分离、Electron 可启动骨架与三个 required check 的真实接线。它只交付工程地基，不伪造 workflow 行为；D5 的独立 test-writer 流程从 Task 2 开始。
+
+后续 tasks 按 `workflow-ir` → `run-execution` store 与 `agent-adapter`（可并行取证但 change 内串行交付）→ orchestrator → realtime API → `run-ui` 排序。每个 task 对应一次 dispatch/PR，并引用相应 delta spec；`tasks.md` 只作为播种快照。
+
+### 2. Codex adapter 只依赖 app-server stable API
+
+`agent-adapter` spawn `codex app-server --listen stdio://`，每条 stdin/stdout 消息为一行 JSON-RPC。连接生命周期固定为：
+
+1. `initialize`（带 client metadata）并等待成功响应，再发送 `initialized`；
+2. `thread/start`，显式传入工作目录、`approvalPolicy: "never"` 与只读 sandbox；从响应的 `thread.sessionId` 捕获恢复指针；
+3. `turn/start` 发送文本 input；把 `item/agentMessage/delta` 归一化为 `text_delta`，把 item/tool/usage 等稳定通知归一化为对应 `AgentEvent`，未知通知保留为 `raw`；
+4. 以 `item/completed` 中最终 agent message 作为 final text 的权威值，以 `turn/completed` 判定 completed/failed；进程退出或协议错误必须显式失败，不能用“收到过文本”推断成功。
+
+P1 不设置 `experimentalApi`，不实现 steer/resume/approval UI。只读 sandbox + `approvalPolicy: "never"` 避免无人值守 run 卡在审批请求；若 server 仍发起未支持的请求，adapter 必须拒绝并以结构化 failure 结束，不能自动扩大权限。此决定落实 `agent-adapter/spec.md`，并为 `run-execution/spec.md` 提供稳定的 session/text/result 输入。
+
+CI 不启动真实模型：协议解析由脱敏后的真实 app-server JSONL 录制 fixture 做表驱动测试；另提供显式本地 live smoke 命令，它必须使用已安装、已登录的 Codex，运行真实示例 prompt 并输出 session id、增量文本和终态。fixture/fake adapter 只用于确定性测试，不得满足“真实调用”验收项。
+
+### 3. Electron 是薄壳，renderer 与 orchestrator 通过 loopback HTTP/WS 通信
+
+`desktop` main process 只创建一个 `BrowserWindow`、启动/监督独立 `server` 子进程、在 app 退出时终止子进程，并加载本地构建的 React renderer；orchestrator、validator、SQLite 与 adapter 均不进入 Electron main process。renderer 设置 `nodeIntegration: false`、`contextIsolation: true`，不暴露通用 IPC、shell 或 filesystem API，并拒绝非应用内导航。
+
+开发时 `/web` 可直接由浏览器连接同一 Hono API；桌面窗口复用相同前端。server 只绑定 loopback 地址，启动后向 parent 报告实际端口；Electron 将该 origin 作为只读启动配置传给 renderer，避免固定端口冲突。此决定同时约束 `build-pipeline/spec.md` 的 shell 骨架和 `run-ui/spec.md` 的最终桌面行为。
+
+### 4. SQLite 事务同时提交状态与事件，run_events 由数据库阻止改写
+
+`run-execution` 按 PRD §11 建 6 张表。每次状态迁移在单个 SQLite transaction 内更新 run/node/task 行并 append 对应 `run_events`；下一个 `seq` 在该 transaction 内按当前 run 分配，从 1 开始且无重复、无空洞。`run_events` 对 `(run_id, seq)` 建主键，并用 SQLite triggers 拒绝 UPDATE/DELETE，从数据库层证明 append-only，而不只依赖调用约定。
+
+final text 在节点完成的同一事务中写为 `report` artifact，并通过 `run_id`、`node_run_id` 指向来源；随后 append `artifact_emitted` 与完成事件。UI 只消费持久化事件和读 API，不直接订阅 adapter 内存流。此决定落实 `run-execution/spec.md`，并向 `run-ui/spec.md` 提供唯一事实源。
+
+### 5. P1 React Flow 只呈现运行状态，不产生 IR
+
+`run-ui` 将写死 IR 映射为 React Flow nodes/edges，并设置 `nodesDraggable={false}`、`nodesConnectable={false}`、禁止删除/新增；viewport 的 pan/zoom 可以保留，但任何交互都不能改变 IR。每个 PRD §10 node 状态有稳定的视觉 token（颜色并辅以文本标签，避免只靠颜色传达）。
+
+Hono 提供启动 run、读取 snapshot/artifact 和 WebSocket 事件流；WS 客户端携带最后确认的 `seq`，server 先补发缺失事件再转 live。renderer 以相同的 event reducer 更新节点状态、文本和 artifact，确保断线重连结果与连续连接一致。此决定落实 `run-ui/spec.md`，不提前实现 P2 authoring。
+
+## Risks / Trade-offs
+
+- **[app-server 协议随 Codex CLI 版本演进]** → 仅依赖官方 stable API；记录 fixture 的 CLI 版本；未知通知走 `raw`；协议错误 fail closed；fixture 更新必须经独立测试 PR 规则处理。
+- **[CI 无法证明本机账号已登录并能调用模型]** → CI 证明 parser/orchestrator 的确定性合同，本地 live smoke 证明真实通道；两类证据在 task 判据中分开，禁止用 fake 替代 live 证据。
+- **[Electron/renderer 扩大本地权限面]** → renderer 不启用 Node integration，保持 context isolation，不暴露通用 IPC；server 只监听 loopback，业务能力仍受 orchestrator 权限策略约束。
+- **[SQLite 原生依赖增加 Electron 打包复杂度]** → better-sqlite3 只加载在独立 Node server 进程，Electron main/renderer 不直接引用；P1 只要求从 checkout 可运行，不把跨平台安装包签名纳入范围。
+- **[高频 text delta 导致写放大]** → adapter 保持原始增量语义，orchestrator 按约 500ms 批量写 `agent_text_delta`；终态 final text 仍以完成 item 为准。
+- **[颜色状态难以自动/无障碍验证]** → 节点同时提供机器可读 `data-status` 与可见状态文本，E2E 断言语义状态和对应 style token。
+
+## Migration Plan
+
+这是 greenfield change，无数据迁移与兼容负担。按 tasks 顺序逐 PR 引入；任一中间 PR 必须保持当时已有命令全绿，不以 stub 声称后续 capability 已完成。若某 task 回滚，只回滚该 issue 的 PR；SQLite schema 在 P1 尚无已发布用户数据，必要时删除开发数据库并重建。
+
+## Open Questions
+
+无阻塞问题。Codex 具体版本不在 spec 中钉死；实现需记录生成真实 fixture 时的 `codex --version`，并以当前官方 stable protocol 为准。

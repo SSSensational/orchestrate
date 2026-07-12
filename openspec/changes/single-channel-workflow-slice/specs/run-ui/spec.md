@@ -2,31 +2,97 @@
 
 ## ADDED Requirements
 
-### Requirement: Read-only run view
+### Requirement: Realtime run read API
 
-The web UI SHALL provide a read-only view of a run that displays each node's current status, the agent's live text stream, and the final artifact, consuming `run_events` over WebSocket with seq-based catch-up on reconnect. The Phase 1 UI SHALL NOT expose canvas editing, human-gate forms, or a replay timeline.
+The server SHALL expose a loopback HTTP endpoint that starts the bundled workflow and read endpoints for its persisted run snapshot and artifacts. It SHALL expose a WebSocket event stream sourced from persisted `run_events`; a client connecting with its last received `seq` SHALL receive every later persisted event in order before receiving new live events.
 
-#### Scenario: Node status is visible and reflects state
+#### Scenario: Start endpoint returns a persisted run
 
-- **GIVEN** a started run for the single-agent IR
-- **WHEN** the run view is opened
-- **THEN** the node is rendered with a status indicator
-- **AND** the indicator updates from `running` to `completed` as the run progresses
+- **GIVEN** the server is ready and the bundled example IR is valid
+- **WHEN** a client requests a run through the start endpoint
+- **THEN** the response identifies a persisted run in `created` or `running` state
+- **AND** the run snapshot endpoint returns the bundled IR as `ir_snapshot_json`
 
-#### Scenario: Live agent text stream is shown
+#### Scenario: WebSocket streams persisted events in sequence
 
-- **GIVEN** a running node whose adapter emits `text_delta` events
-- **WHEN** the run view is open
-- **THEN** the streamed text appears incrementally in the UI as events arrive
+- **GIVEN** a client subscribed to a newly started run from `seq = 0`
+- **WHEN** the run emits lifecycle and agent text events
+- **THEN** the client receives each event in strictly increasing `seq` order
+- **AND** every received event can be read from SQLite with the same run id, seq, type, and data
 
-#### Scenario: Final artifact is shown after completion
+#### Scenario: Reconnect catches up without loss or duplication
 
-- **GIVEN** a completed run that produced a `report` artifact
-- **WHEN** the run view is open
-- **THEN** the final report artifact's content is displayed and attributed to its node
+- **GIVEN** a client that disconnects after acknowledging `seq = K` while its run continues
+- **WHEN** it reconnects with `after_seq = K`
+- **THEN** the first replayed event has `seq = K + 1` when such an event exists
+- **AND** all events through the current persisted maximum are delivered exactly once and in order before live delivery resumes
 
-#### Scenario: Reconnect catches up by seq
+### Requirement: Electron thin shell owns the server process lifecycle
 
-- **GIVEN** a run view whose WebSocket connection drops and reconnects mid-run
-- **WHEN** it reconnects with the last received `seq`
-- **THEN** it receives the missed events and the rendered state matches a client that never disconnected
+The Electron app SHALL start the runtime server as a separate Node child process bound only to loopback, wait for an explicit readiness message containing its actual port, and then open the run UI. Closing the app SHALL terminate that child process. Workflow validation, orchestration, adapter execution, and SQLite access SHALL remain outside the Electron main process.
+
+#### Scenario: Desktop launch starts one ready server and one window
+
+- **GIVEN** the built desktop application and no pre-existing runtime server
+- **WHEN** the Electron app launches
+- **THEN** it starts exactly one runtime server child process bound to a loopback address
+- **AND** it waits for the child's readiness message before the run UI makes API requests
+- **AND** it opens exactly one application window connected to that reported server origin
+
+#### Scenario: Desktop shutdown terminates its server child
+
+- **GIVEN** a launched Electron app with a live runtime server child process
+- **WHEN** the application exits normally
+- **THEN** the child process terminates within the configured shutdown grace period
+- **AND** its loopback port no longer accepts connections
+
+### Requirement: Read-only React Flow run canvas
+
+Inside the Electron window, the UI SHALL render the bundled IR as a React Flow canvas. Nodes and edges SHALL NOT be addable, deletable, reconnectable, or draggable. Each node SHALL expose its current PRD §10 status as visible text and a stable status-color token; the UI SHALL also display the selected run's incremental agent text and persisted final artifact.
+
+#### Scenario: Canvas structure is read-only
+
+- **GIVEN** the bundled single-agent IR is open in the Electron window
+- **WHEN** the user attempts to drag its node, create or reconnect an edge, or delete a graph element
+- **THEN** node positions and the IR node/edge sets remain unchanged
+- **AND** no mutation request is sent to the server
+
+#### Scenario: Node status color follows persisted state
+
+- **GIVEN** a started single-agent run displayed on the canvas
+- **WHEN** its node progresses from `running` to `completed`
+- **THEN** the node's visible status text changes from `running` to `completed`
+- **AND** its status-color token changes to the token defined for `completed`
+- **AND** its machine-readable `data-status` equals `completed`
+
+#### Scenario: Live agent text is displayed incrementally
+
+- **GIVEN** a displayed running node and two persisted `agent_text_delta` events with consecutive seq values
+- **WHEN** those events arrive through the WebSocket stream
+- **THEN** the text panel displays both deltas in sequence without waiting for run completion
+- **AND** each delta appears exactly once
+
+#### Scenario: Final artifact is displayed with provenance
+
+- **GIVEN** a completed run with a persisted `report` artifact
+- **WHEN** the run UI receives completion and reads artifacts
+- **THEN** it displays the report's complete text
+- **AND** it displays the id of the producing workflow node
+- **AND** the displayed artifact id, run id, and node-run id match persisted provenance
+
+#### Scenario: Reconnected UI converges to uninterrupted state
+
+- **GIVEN** two clients viewing the same run, one of which disconnects and later reconnects with its last seq
+- **WHEN** catch-up completes
+- **THEN** both clients show the same node status, accumulated text, and artifact content
+
+### Requirement: Phase 1 UI excludes authoring and later-phase controls
+
+The Phase 1 desktop UI SHALL NOT expose controls for editing or saving the IR, human-gate decisions, retries, recovery, or timeline replay.
+
+#### Scenario: Later-phase controls are absent
+
+- **GIVEN** the Electron run UI is open
+- **WHEN** its available controls and accessibility tree are inspected
+- **THEN** there is no control that adds, deletes, reconnects, edits, or saves workflow graph content
+- **AND** there is no human-gate, retry, recovery, or replay-timeline control

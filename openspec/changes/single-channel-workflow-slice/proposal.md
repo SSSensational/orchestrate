@@ -2,48 +2,57 @@
 
 ## Why
 
-当前仓库只有流程基建（OpenSpec、CI 门禁、本地 CLI 派发脚本），没有任何可运行的产品代码——living specs 按 D2 从空开始。要证明 PRD §0 的核心命题（「coding agent 会话可被当作 workflow 节点编排」「workflow 是可校验、可观察的数据」），必须先交付第一个端到端可运行的纵向切片。
+当前仓库只有 OpenSpec、确定性门禁和本地 agent 派发等流程基建，还没有可运行的 Agent Workflow Runtime。需要先交付 PRD §19 Phase 1 的最小纵向切片，证明一份 workflow IR 能被校验、由真实本地 coding agent 执行、持久化为事件与 artifact，并在产品形态内被实时观察。
 
-本 change 交付 PRD §19 **Phase 1** 的可展示 checkpoint：一份写死的、单 Agent、无环的 Cross-Agent Review IR，经 L1 Schema + L2 图语义校验、经第一个本地 coding-agent adapter 执行、状态机推进、事件 append-only 落 SQLite，最终在只读 UI 中呈现节点状态、实时文本流与结果 artifact。
-
-排序约束（Why 的一部分）：Phase 1 的**第一个 task 必须是工程脚手架**（pnpm workspace + TS strict + vitest 测试分离 + lint + 三个 required check 真实接线）。它是后续一切 issue 的地基，也是让 `ci` 从「无 package.json 时空转通过」变为真实执行的前提。测试作者/实现者分离（D5）从第二个 task 起才生效——脚手架 task 本身允许无验收测试先行，靠 CI 判据 + 人审兜底。
+工程脚手架必须先于所有产品能力落地：只有先建立 pnpm workspace、TypeScript strict、测试分离、lint、Electron 薄壳骨架和真实 CI 接线，后续 issue 才有可编译、可测试、可验收的共同地基。按 D5，测试作者/实现者分离从第二个 task 起生效；脚手架 task 本身允许没有预先存在的 `acceptance/` 测试，由确定性 CI 判据和人审验收。
 
 ## What Changes
 
-- **新增 capability `build-pipeline`**：pnpm 工作区、TS strict、eslint、vitest（默认排除 `acceptance/`，`pnpm acceptance` 单列）、`ci`/`spec-validate`/`test-guard` 三个 required check 真实转绿（不再空转）。
-- **新增 capability `workflow-ir`**：Canonical IR（`agent.workflow/v1`）的 zod 类型与 L1 Schema 校验、L2 图语义校验、结构化错误（`{ node?, edge?, code, message }[]`）；附一份写死的单 Agent Cross-Agent Review 示例 IR。
-- **新增 capability `agent-adapter`**：第一个 AgentAdapter，走 Claude Code 原生无头通道，spawn 本地会话、归一化事件流为 `AgentEvent`、捕获 session id；事件归一化有基于真实录制输出的表驱动测试。
-- **新增 capability `run-execution`**：Orchestrator 按 PRD §10 状态机推进 run/node；6 张表的 SQLite 存储；`run_events` 以递增 `seq` append-only 持久化；adapter final text 兜底存为 `report` artifact 并可溯源到 node_run。
-- **新增 capability `run-ui`**：只读 Web UI，展示节点状态、agent 实时文本流、最终 artifact。
+- 建立 pnpm 工作区与 Node.js 22 + TypeScript strict 工具链，接入 lint、vitest、Electron 薄壳骨架，并让 `ci`、`spec-validate`、`test-guard` 三个 required check 执行真实逻辑。
+- 建立 `agent.workflow/v1` Canonical IR 的 L1 Schema 与 Phase 1 所需的 L2 图语义校验，附写死的单 Agent、无环 Cross-Agent Review 示例 IR，并统一返回可定位的结构化错误。
+- 建立首个本地 `AgentAdapter`：spawn Codex `app-server` 的原生 stdio 通道，完成 JSON-RPC 握手、事件归一化、session 捕获和 final text 提取；用真实录制输出做表驱动回归测试。
+- 建立单节点 orchestrator、PRD §10 状态机和 SQLite 持久化；`run_events` 按 run 使用连续递增 `seq` append-only 写入，final text 兜底成为可溯源的 `report` artifact。
+- 建立 Hono HTTP/WebSocket 读模型，并在 Electron 薄壳窗口内用 React Flow 呈现只读节点画布、状态颜色、实时文本流和最终 artifact。
 
-不改动 `openspec/changes/` 以外的任何东西（本 change 仅新增提案与 spec delta；实现由播种后的 issue 完成）。
+## Capabilities
+
+### New Capabilities
+
+- `build-pipeline`: pnpm/TypeScript/vitest/lint/Electron 工程地基、测试分离与 required checks 真实接线。
+- `workflow-ir`: Canonical IR、示例 flow、L1/L2 校验与结构化错误契约。
+- `agent-adapter`: Codex `app-server` 原生 adapter、事件归一化与真实录制 fixture 契约。
+- `run-execution`: run/node 状态机、SQLite 事件日志和 final-text artifact 兜底。
+- `run-ui`: Hono 实时读接口与 Electron 内的只读 React Flow 运行视图。
+
+### Modified Capabilities
+
+无。仓库按 D2 尚无 living specs，本 change 首次建立上述 capabilities。
 
 ## Impact
 
-- **影响的 capabilities**：`build-pipeline`、`workflow-ir`、`agent-adapter`、`run-execution`、`run-ui`（均为本仓库首次建立，living spec 从空到有）。
-- **代码影响面**：建立 `/shared`、`/server`、`/web`、`/examples` 工作区（PRD §16 仓库结构）；引入 better-sqlite3、zod、Hono、Vite+React 依赖；`package.json` 出现后 `ci` 变为真实执行。
-- **门禁影响**：脚手架 task 让三个 required check 真实转绿；此后 `acceptance/**` 由 test-writer 拥有（D5），本 change 的实现 issue 从第二个起适用测试分离。
-- **风险**：Claude Code 原生通道的事件格式若随版本漂移，adapter 归一化需以录制 fixture 兜底（见 design.md）；本地 CLI 需已登录可用（`probe()` 前置）。
+- 新增 `/shared`、`/server`、`/web`、`/desktop`、`/examples` 工作区及根级 pnpm 配置。
+- 引入 zod、better-sqlite3、Hono、Vite、React、`@xyflow/react`、Electron、vitest、Playwright 等依赖。
+- `ci` 移除“无 product source 时空转通过”的分支，改为安装依赖并真实执行 typecheck、lint、test；现有 `spec-validate` 与 `test-guard` 继续作为确定性门禁并在脚手架 PR 上实际运行。
+- 运行时将 spawn 已安装且已登录的本地 Codex CLI；CI 不调用模型，adapter 的确定性门禁使用真实录制 fixture，真实通道由本地 smoke/demo 行为验收。
+- 本提案只修改 `openspec/changes/single-channel-workflow-slice/`；实现由 tasks 播种后的独立 issues/PRs 完成。
 
-## 验收判据（成果级；提案在 tasks.md 与 specs 细化到可判定）
+## 验收判据
 
-- [ ] 新 clone 后 pnpm 可完成 install、typecheck、lint、test；`ci` / `spec-validate` / `test-guard` 三个 required check 在 CI 真实转绿（不再空转）
-- [ ] `pnpm test` 默认排除 `acceptance/`；`pnpm acceptance` 可独立运行
-- [ ] 示例单 Agent IR 通过 L1 Schema 与 L2 图语义校验
-- [ ] 非法 IR 返回包含 node/edge/code/message 的结构化错误
-- [ ] 启动 run 后真实调用一个本地 coding-agent adapter（Claude Code 原生通道）
-- [ ] run / node 状态按 PRD §10 状态机推进
-- [ ] `run_events` 以递增 seq append-only 持久化到 SQLite
-- [ ] adapter final text 兜底保存为 artifact，可溯源到节点
-- [ ] adapter 事件归一化有基于真实录制输出的表驱动测试
-- [ ] 只读 UI 可看到节点状态、实时文本流和最终 artifact
+- [ ] 新 clone 后可完成 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm lint`、`pnpm test`；`ci`、`spec-validate`、`test-guard` 三个 required check 在脚手架 PR 上真实转绿
+- [ ] `pnpm test` 默认不收集 `acceptance/`；`pnpm acceptance` 只运行 `acceptance/**`
+- [ ] 写死的单 Agent Cross-Agent Review IR 通过 L1 Schema 与 L2 图语义校验
+- [ ] 非法 IR 返回包含 `node`、`edge`、`code`、`message` 键的结构化错误；可定位错误的对应 locator 非空
+- [ ] 启动 run 后真实调用本地 Codex `app-server` adapter，而非 fixture、stub 或云 task
+- [ ] run/node 状态按 PRD §10 允许的状态迁移推进并持久化
+- [ ] `run_events` 在 SQLite 中以每 run 从 1 开始、无重复且无空洞的递增 `seq` append-only 持久化
+- [ ] Codex final text 兜底保存为 `report` artifact，并能通过 `run_id` 与 `node_run_id` 溯源到产出节点
+- [ ] Codex adapter 的事件归一化有基于真实录制 app-server JSONL 输出的表驱动测试
+- [ ] Electron 薄壳窗口内的只读 React Flow 画布能看到按状态着色的节点、实时文本流和最终 artifact
 
 ## Non-goals
 
-- 多 Agent 并行；跨厂商同图协作（P2）
-- MCP artifact 工具通道（`emit_artifact` / `get_context` + task-scoped token，P2）
-- `agent.reduce` 节点；失败重试（attempt / failure_reason / 带毒判定，P2）
-- Human Gate、受控环、失败恢复、回放时间线（P3）
-- 可视化编辑（React Flow 增删改、ui_json sidecar，P4）
+- 可视化编辑画布（P2）
+- 多 Agent 并行、Claude Code/OpenCode adapter、MCP artifact 工具通道、`agent.reduce`（P3）
+- Human Gate、受控环、失败恢复、重试策略、回放时间线（P4）
 - NL→IR（P5）
 - 云 task 通道与云执行基础设施（PRD §21）

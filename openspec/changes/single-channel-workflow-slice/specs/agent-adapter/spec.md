@@ -2,38 +2,66 @@
 
 ## ADDED Requirements
 
-### Requirement: Local Claude Code adapter
+### Requirement: Local Codex app-server adapter
 
-The system SHALL provide an AgentAdapter that probes and drives a local Claude Code session over its native headless channel (`claude -p --output-format stream-json --input-format stream-json`), exposing an async event stream of normalized `AgentEvent`s and a result promise, and SHALL capture the session id the first time it appears in the stream.
+The system SHALL provide an `AgentAdapter` that probes and drives a locally installed Codex CLI through `codex app-server` over its native stdio JSON-RPC transport. For every connection it SHALL complete `initialize`/`initialized` before `thread/start`, complete `thread/start` before `turn/start`, use a read-only workspace with no interactive approval, and capture `thread.sessionId` as soon as it is returned.
 
-#### Scenario: Adapter probe reports availability
+#### Scenario: Adapter probe reports local availability
 
-- **GIVEN** a machine with the Claude Code CLI installed
+- **GIVEN** a machine with the Codex CLI installed
 - **WHEN** the adapter's `probe()` is called
-- **THEN** it returns `available: true` with a version string
+- **THEN** it returns `available: true`
+- **AND** it returns the installed Codex version as a non-empty string
 
-#### Scenario: Execute streams events and returns a result
+#### Scenario: Live smoke run uses the real local app-server
 
-- **GIVEN** the adapter is asked to execute a prompt in a read-only workspace
-- **WHEN** the session runs to completion
-- **THEN** the event stream yields at least one `session` event and one or more `text_delta` events
-- **AND** the result promise resolves with `status: "completed"` and a non-empty `finalText`
-- **AND** the captured `sessionId` matches the id from the `session` event
+- **GIVEN** a locally installed and authenticated Codex CLI and the bundled read-only smoke prompt
+- **WHEN** the live adapter smoke command is run without a fixture or fake process
+- **THEN** it spawns `codex app-server` and completes the required handshake in order
+- **AND** it emits a `session` event whose id equals the returned `thread.sessionId`
+- **AND** it emits at least one `text_delta` event from app-server notifications
+- **AND** its result resolves with `status: "completed"` and non-empty `finalText`
 
-### Requirement: Table-driven event normalization from recorded output
+#### Scenario: Unsupported server request fails closed
 
-Adapter event-stream normalization SHALL be covered by a table-driven test whose fixtures are real recorded Claude Code headless output; each fixture maps to the expected `AgentEvent` sequence, and any line that cannot be classified SHALL be surfaced as a `raw` event rather than dropped or throwing.
+- **GIVEN** an app-server connection configured for read-only execution with no interactive approval
+- **WHEN** app-server sends a server-initiated request that the Phase 1 adapter does not support
+- **THEN** the adapter does not grant the requested permission
+- **AND** execution ends with `status: "failed"` and a non-empty failure reason instead of hanging
 
-#### Scenario: Recorded fixture normalizes to expected events
+### Requirement: Stable app-server events normalize to AgentEvent
 
-- **GIVEN** a fixture of recorded Claude Code NDJSON output
-- **WHEN** it is fed through the adapter's normalization
-- **THEN** the produced `AgentEvent` sequence equals the fixture's expected sequence
-- **AND** every discriminated `type` in the output is a valid `AgentEvent` member
+The adapter SHALL normalize stable app-server notifications into the typed `AgentEvent` union, including session, agent-message text delta, tool-call status, and usage where present. It SHALL take final text from the completed agent-message item and SHALL use `turn/completed` to determine the result status; messages it cannot classify SHALL be emitted as `raw` without being dropped.
 
-#### Scenario: Unclassifiable line falls back to raw
+#### Scenario: Completed turn yields normalized stream and final text
 
-- **GIVEN** a recorded line that matches no known event shape
+- **GIVEN** an app-server message sequence containing `thread/started`, `item/agentMessage/delta`, a completed agent-message item, and `turn/completed`
+- **WHEN** the adapter normalizes the sequence
+- **THEN** the output contains a `session` event and the corresponding ordered `text_delta` events
+- **AND** the result status matches the `turn/completed` status
+- **AND** `finalText` equals the text in the completed agent-message item
+
+#### Scenario: Unclassifiable notification falls back to raw
+
+- **GIVEN** a valid JSON-RPC notification whose method is not recognized by the adapter
 - **WHEN** it is normalized
 - **THEN** it is emitted as a `raw` event carrying the original payload
 - **AND** normalization does not throw
+
+### Requirement: Table-driven normalization uses real recorded output
+
+Adapter normalization SHALL have a table-driven test whose input fixture is a sanitized recording from a real Codex app-server run. The fixture metadata SHALL record the Codex CLI version and each case SHALL map input JSONL messages to the exact expected `AgentEvent` sequence and `AgentResult`.
+
+#### Scenario: Recorded fixture matches expected normalized output
+
+- **GIVEN** a committed sanitized fixture recorded from a real Codex app-server process and its expected-output table
+- **WHEN** every fixture case is passed through normalization
+- **THEN** each produced `AgentEvent` sequence exactly equals its expected sequence
+- **AND** each produced result exactly equals its expected `AgentResult`
+- **AND** the fixture metadata contains a non-empty Codex CLI version
+
+#### Scenario: Fixture contains no recording secrets
+
+- **GIVEN** the committed real-output fixture
+- **WHEN** its JSONL payloads are inspected
+- **THEN** they contain no access token, authorization header, home-directory path, repository remote URL, or user prompt content beyond the dedicated smoke prompt
