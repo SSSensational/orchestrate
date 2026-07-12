@@ -5,3 +5,5 @@ export type JsonValue =
   | null
   | JsonValue[]
   | { [key: string]: JsonValue };
+
+export * from './workflow-ir.js';
