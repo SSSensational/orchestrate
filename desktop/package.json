@@ -12,6 +12,6 @@
     "smoke": "electron . --smoke"
   },
   "devDependencies": {
-    "electron": "39.8.7"
+    "electron": "43.1.0"
   }
 }
