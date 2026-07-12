@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Agent 适配器注册表 —— 本项目产品里 AgentAdapter registry 的退化（单机、单节点、纯本地）形态。
-// 每个本地 CLI 知道自己怎么当 builder（可写工作区、自行 commit）或 reviewer（只读分析，产出交给脚本上报）。
+// 每个本地 CLI 知道自己怎么当 builder（可写工作区、自行 commit）或 reviewer（在一次性 worktree
+// 里读码 + 实机执行验证命令，产出交给脚本上报——见 review.mjs）。
 // 新增一家本地 CLI = 在 ADAPTERS 里加一条三元组。云通道不在此文件（已按 D9 移出执行面）。
 // 注意：键序即缺省优先序——AGENTS[0] 是 watch/propose 未指定时的缺省 agent。
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -13,7 +14,9 @@ export const ADAPTERS = {
     // 已在 codex-cli 0.144.1 移除，留着会在参数解析阶段即报错退出。无人值守语义由 `--sandbox workspace-write`
     // （写入限工作区）承载，不再需要审批开关，也不扩大权限。
     build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', prompt]],
-    review: (prompt) => ['codex', ['exec', '--sandbox', 'read-only', prompt]],
+    // reviewer 也要能实机验证（pnpm install/test/smoke），所以同样 workspace-write；
+    // 装依赖需要访问 registry，故开 sandbox 内网络。写入仍被限制在一次性 worktree 内。
+    review: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true', prompt]],
   },
   claude: {
     displayName: 'Claude Code',
@@ -21,13 +24,23 @@ export const ADAPTERS = {
     // 无头 builder 预设 auto-approve（PRD §3.2 共性）：acceptEdits 只放行编辑、Bash 全被审批墙挡住，
     // agent 连自测/validate 都跑不了。安全 = worktree 隔离 + 平台门禁 + repo deny hooks。
     build: (prompt) => ['claude', ['-p', prompt, '--permission-mode', 'bypassPermissions']],
-    review: (prompt) => ['claude', ['-p', prompt, '--permission-mode', 'plan']], // plan = 只读
+    // 不用 plan（纯只读，连验证命令都跑不了）也不用 bypassPermissions（连 gh/git push 都放行）：
+    // 白名单只放行验证所需命令（pnpm install/test/smoke、node --test、npm view 查 registry），
+    // 其余工具在无头模式下自动拒绝——reviewer 能验证，但碰不了 gh、改不了源码。
+    // GUI 探索验证：挂 Playwright MCP 经 CDP 接管 Electron 窗口（renderer 即 Chromium）。
+    // reviewer 先自行以 --remote-debugging-port=9222 启动 app（见 review.mjs prompt），MCP 首次调用时连接。
+    // --strict-mcp-config 隔离掉评审机上碰巧配置的其他 MCP server。GUI lane 目前仅 claude 接了
+    // （codex 需 config.toml 配 mcp_servers，opencode 类似——按需再接）。
+    review: (prompt) => ['claude', ['-p', prompt,
+      '--allowedTools', 'Bash(pnpm:*),Bash(node:*),Bash(npm view:*),mcp__playwright',
+      '--mcp-config', '{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest","--cdp-endpoint","http://127.0.0.1:9222"]}}}',
+      '--strict-mcp-config']],
   },
   opencode: {
     displayName: 'OpenCode',
     gitAuthor: { name: 'OpenCode', email: 'noreply@opencode.ai' },
     build: (prompt) => ['opencode', ['run', prompt]],
-    review: (prompt) => ['opencode', ['run', prompt]], // 无只读沙箱——由 review.mjs 放进 PR head 的临时 worktree 硬隔离（写不到主工作树）+ prompt 约束
+    review: (prompt) => ['opencode', ['run', prompt]], // 无沙箱开关——由 review.mjs 放进 PR head 的一次性 worktree 硬隔离（写不到主工作树）+ prompt 约束
   },
 };
 
