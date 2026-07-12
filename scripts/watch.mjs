@@ -19,7 +19,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { agentFromLabels, agentGhEnv, AGENTS, gh } from './agents.mjs';
+import { agentFromLabels, agentGhEnv, AGENTS, gh, ghAgent } from './agents.mjs';
 import { firstOpenIssueNumber } from './watch-order.mjs';
 import { reviewStep } from './review-policy.mjs';
 
@@ -104,6 +104,13 @@ const claim = (num) => { try { gh(['issue', 'edit', String(num), '--remove-label
 const clearWip = (num) => { try { gh(['issue', 'edit', String(num), '--remove-label', WIP]); } catch { /* ignore */ } };
 const flagHuman = (num) => { try { gh(['issue', 'edit', String(num), '--remove-label', WIP, '--add-label', 'needs-human']); } catch { /* ignore */ } };
 
+// 自动循环的交人终态在 PR 留简短交接评论（bot 身份）——不在终端旁边的人（手机）也能看到
+// "自动化已停、在等人"。fail-open：留言失败只记日志，不阻塞主流程（留痕是可视性，非门禁）。
+function prNote(prNum, body) {
+  try { ghAgent(['pr', 'comment', String(prNum), '--body', `**watch**：${body}`]); }
+  catch (e) { log(`（PR #${prNum} 交接留言失败：${e.message}）`); }
+}
+
 // --- 启动恢复：上个 watch 中断遗留的 wip 孤儿，还原 ready 重新排队（单实例保证了安全）---
 function recoverOrphans() {
   let orphans = [];
@@ -180,6 +187,7 @@ function startRevision(num, builder, reviewerLabel, change, pr, revisionRound) {
     if (code === 0) return startReview(num, builder, reviewerLabel, change, revisionRound);
     inflight.delete(num);
     log(`✗ #${num} 顾问复修失败（dispatch 退出码 ${code}）——打 needs-human`);
+    prNote(pr.number, `顾问复修派发失败（dispatch 退出码 ${code}）——自动循环已停止，issue #${num} 已打 needs-human，等待人接管。`);
     flagHuman(num);
     maybeExit();
   });
@@ -208,8 +216,13 @@ function startReview(num, builder, reviewerLabel, change, revisionRound) {
     inflight.delete(num);
     clearWip(num);
     if (step === 'pass') log(`✓ #${num} → PR #${pr.number} 顾问 PASS——等你终审`);
-    else if (step === 'changes') log(`✓ #${num} → PR #${pr.number} 复审仍为 CHANGES——停止自动循环，交你终审`);
-    else log(`✓ #${num} → PR #${pr.number} 已开；⚠ 顾问评审失败（退出码 ${code}），顾问非门禁`);
+    else if (step === 'changes') {
+      log(`✓ #${num} → PR #${pr.number} 复审仍为 CHANGES——停止自动循环，交你终审`);
+      prNote(pr.number, '复修后复审仍为 CHANGES——自动循环已停止（复修/复审封顶一轮，D12），等待人终审处理。');
+    } else {
+      log(`✓ #${num} → PR #${pr.number} 已开；⚠ 顾问评审失败（退出码 ${code}），顾问非门禁`);
+      prNote(pr.number, `顾问评审运行失败（退出码 ${code}）——顾问非门禁，本 PR 照常等待 required checks 与人终审。`);
+    }
     maybeExit();
   });
   inflight.set(num, { child, change });
