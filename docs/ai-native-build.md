@@ -92,7 +92,7 @@ project-root/
 - **CODEOWNERS**：`openspec/**`、`docs/**`（含本文与 PRD）、`.github/**`、`AGENTS.md`、`CLAUDE.md` 变更必须人审。
 - **test-guard**：动既有测试 / 实现 PR 夹带新增验收测试 → 红，除非人打 `approved-test-change`。
 - **验收测试是奖励函数的核心**：由 test-writer（可指定任一 CLI、只读判据不看实现）从判据 + spec 的 GIVEN/WHEN/THEN scenarios 派生，test-guard 锁住 builder 不能改，CI 里转绿才算过——确定性、厂商中立、不可篡改。
-- **顾问评审（review.mjs）**：异 CLI 只读第二意见，发 PR 评论；首次 `CHANGES` 可触发最多一轮原 builder 复修/复审，**仍非门禁、不阻塞合并**。reviewer 在 PR head 的临时 detached worktree 里跑（硬隔离只读）；diff / 判据落文件传路径；对抗式双视角竞争评审。
+- **顾问评审（review.mjs）**：异 CLI 第二意见，发 PR 评论；首次 `CHANGES` 可触发最多一轮原 builder 复修/复审，**仍非门禁、不阻塞合并**。reviewer 在 PR head 的临时 detached worktree 里跑（写不到主工作树，评审毕即删），读码之外须实机执行验证命令（install / test / smoke）核实判断，GUI 改动经 Playwright MCP（CDP 接管 Electron）实际操作验证——与 CI 确定性测试分工：CI 管已知不变量的回归，reviewer 管本次 diff 的探索路径；gh 上报只由脚本做；diff / 判据落文件传路径；对抗式双视角竞争评审。
 - **受保护文件起草**：本地 hooks 不笼统 deny `docs/**` 与 `.github/**`；agent 仅在 issue 明确列入范围时可在 issue 分支起草。硬边界是 branch protection + CODEOWNERS + required checks + 人终审；agent 永远不得直接 push 受保护分支或 merge。
 
 ## 7. 与 PRD Phase 对齐
