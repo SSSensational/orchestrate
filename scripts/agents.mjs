@@ -12,8 +12,10 @@ export const ADAPTERS = {
     gitAuthor: { name: 'Codex', email: 'noreply@openai.com' }, // commit 的 author/committer：谁干活谁署名
     // `codex exec` 是非交互模式（无 TTY 可审批），本就不会弹审批——旧版 `--ask-for-approval never`
     // 已在 codex-cli 0.144.1 移除，留着会在参数解析阶段即报错退出。无人值守语义由 `--sandbox workspace-write`
-    // （写入限工作区）承载，不再需要审批开关，也不扩大权限。
-    build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', prompt]],
+    // （写入限工作区）承载，不再需要审批开关。装新依赖需访问 registry，故与 reviewer 同款开 sandbox
+    // 内网络（issue #30 实例：首次引入 @xyflow/react，离线 store 无缓存，pnpm ENOTFOUND 卡死；
+    // 沙箱内 GitHub API 同样不通，连卡点留痕都发不出）。写入仍限一次性 worktree，无逃生口。
+    build: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true', prompt]],
     // reviewer 也要能实机验证（pnpm install/test/smoke），所以同样 workspace-write；
     // 装依赖需要访问 registry，故开 sandbox 内网络。写入仍被限制在一次性 worktree 内。
     review: (prompt) => ['codex', ['exec', '--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true', prompt]],
