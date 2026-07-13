@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
-import { startRunServer } from './run-api.js';
+import { startRunServer, type RunServerOptions } from './run-api.js';
 
 export interface RunServerReadiness {
   type: 'ready';
@@ -16,11 +16,16 @@ export function announceReadiness(readiness: RunServerReadiness): void {
   }
 }
 
-export async function runServerProcess(): Promise<void> {
+export async function runServerProcess(
+  options: RunServerOptions = {},
+): Promise<void> {
   const databasePath = process.env.AGENT_WORKFLOW_DB_PATH;
-  const runtime = await startRunServer(
-    databasePath === undefined ? {} : { databasePath },
-  );
+  const runtime = await startRunServer({
+    ...options,
+    ...(databasePath === undefined || options.databasePath !== undefined
+      ? {}
+      : { databasePath }),
+  });
   announceReadiness({
     type: 'ready',
     host: runtime.host,
@@ -54,4 +59,3 @@ if (
     process.exit(1);
   });
 }
-

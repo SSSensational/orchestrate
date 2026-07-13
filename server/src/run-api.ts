@@ -6,6 +6,7 @@ import type { Duplex } from 'node:stream';
 import { serve } from '@hono/node-server';
 import type { WorkflowIrL2Input } from '@agent-workflow/shared';
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 
 import { singleAgentCrossAgentReviewIr } from './bundled-workflow.js';
 import {
@@ -75,6 +76,18 @@ export interface RunApiOptions {
   onRunError?: (error: unknown) => void;
 }
 
+function rendererOrigin(origin: string): string | null {
+  if (origin === 'null') return origin;
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && url.hostname === LOOPBACK_HOST
+      ? origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createRunApi(options: RunApiOptions): Hono {
   const app = new Hono();
   const workflow = options.workflow ?? singleAgentCrossAgentReviewIr;
@@ -82,6 +95,8 @@ export function createRunApi(options: RunApiOptions): Hono {
     target: process.cwd(),
     ...options.defaultInputs,
   };
+
+  app.use('/api/*', cors({ origin: rendererOrigin }));
 
   app.post(RUNS_PATH, async (context) => {
     let body: unknown = {};
