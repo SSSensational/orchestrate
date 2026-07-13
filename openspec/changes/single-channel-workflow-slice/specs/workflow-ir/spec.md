@@ -71,14 +71,22 @@ The system SHALL validate Phase 1 graph semantics after L1 succeeds: node ids ar
 
 Every validation failure SHALL return an ordered list of error objects with exactly the public locator fields `node` and `edge` plus non-empty string fields `code` and `message`. `node` and `edge` SHALL be nullable; an error attributable to a node or edge SHALL populate the applicable locator, and document-level errors SHALL set both locators to null.
 
-#### Scenario: Mixed invalid IR yields consistently shaped errors
+#### Scenario: L1 failure yields consistently shaped errors
 
-- **GIVEN** an IR with an unknown field on a node and an edge targeting a missing node
-- **WHEN** validation runs
+- **GIVEN** an IR with an unknown field on a node
+- **WHEN** L1 schema validation runs
 - **THEN** the result is a non-empty ordered list of error objects
 - **AND** every error object contains the keys `node`, `edge`, `code`, and `message`
 - **AND** every `code` and `message` is a non-empty string
 - **AND** the unknown-field error has a non-null `node`
+
+#### Scenario: L2 failure yields consistently shaped errors
+
+- **GIVEN** an IR that passes L1 schema validation and whose edge target references a missing node id
+- **WHEN** L2 graph-semantic validation runs
+- **THEN** the result is a non-empty ordered list of error objects
+- **AND** every error object contains the keys `node`, `edge`, `code`, and `message`
+- **AND** every `code` and `message` is a non-empty string
 - **AND** the dangling-edge error has a non-null `edge`
 
 #### Scenario: Repeated validation is deterministic
