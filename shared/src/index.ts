@@ -6,4 +6,5 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+export * from './agent-adapter.js';
 export * from './workflow-ir.js';
