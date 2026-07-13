@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc --build",
-    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @agent-workflow/server build && tsc --project tsconfig.json --noEmit",
     "lint": "eslint src",
     "workflow:smoke": "node dist/workflow-live-smoke.js"
   },
