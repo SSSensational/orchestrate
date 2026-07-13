@@ -32,6 +32,13 @@ The orchestrator SHALL enforce and persist the PRD §10 Phase 1 transitions. A r
 - **AND** its agent task passes from `running` to `completed`
 - **AND** the run passes through `created`, `running`, and `completed` in order
 
+#### Scenario: Workflow live smoke crosses the real Codex registry boundary
+
+- **GIVEN** the bundled single-agent Cross-Agent Review IR and a locally installed and authenticated Codex CLI
+- **WHEN** the workflow live smoke command runs through the orchestrator's Codex registry entry
+- **THEN** it invokes the real `codex app-server` transport rather than a fixture or fake adapter
+- **AND** the persisted run completes with contiguous events and exactly one traceable `report` artifact
+
 #### Scenario: Adapter failure fails node and run
 
 - **GIVEN** a running single-agent node whose adapter result is `status: "failed"` with a failure reason
@@ -50,7 +57,7 @@ The orchestrator SHALL enforce and persist the PRD §10 Phase 1 transitions. A r
 
 ### Requirement: Append-only event log with contiguous per-run sequence
 
-Every persisted run or node transition and every normalized session/text lifecycle observation SHALL append a `run_events` row in the same transaction as its associated state change. For each run, `seq` SHALL start at 1 and increase by exactly 1 without duplicates or gaps. SQLite SHALL reject UPDATE and DELETE operations against existing `run_events` rows.
+Every persisted run or node transition and every normalized session/text lifecycle observation SHALL append a `run_events` row in the same transaction as its associated state change. A session id SHALL be persisted when observed, while adjacent text deltas SHALL be aggregated into batches on an approximately 500 ms cadence before persistence. For each run, `seq` SHALL start at 1 and increase by exactly 1 without duplicates or gaps. SQLite SHALL reject UPDATE and DELETE operations against existing `run_events` rows.
 
 #### Scenario: Completed run has contiguous causal events
 
@@ -59,6 +66,13 @@ Every persisted run or node transition and every normalized session/text lifecyc
 - **THEN** their sequence values are exactly `1, 2, 3, …, N`
 - **AND** they include run-started, node-ready, node-started, session-captured, agent-text-delta, node-completed, and run-completed events in causal order
 - **AND** every event's persisted run/node state is consistent with that event
+
+#### Scenario: Adjacent text deltas are persisted as an ordered batch
+
+- **GIVEN** a running agent task that emits multiple adjacent `text_delta` events within one aggregation interval
+- **WHEN** the interval elapses or the adapter event stream closes
+- **THEN** the deltas are concatenated in observation order into one non-empty `agent_text_delta` event
+- **AND** that event is persisted before task and node completion events
 
 #### Scenario: Existing event cannot be updated or deleted
 
