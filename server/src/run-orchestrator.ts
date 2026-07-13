@@ -1,6 +1,7 @@
 import type {
   AgentAdapter,
   AgentEvent,
+  AgentExecuteInput,
   AgentResult,
   WorkflowIrL2Input,
 } from '@agent-workflow/shared';
@@ -21,6 +22,14 @@ export interface RunExecutionOutcome {
   status: 'completed' | 'failed';
   artifactId?: string;
   failureReason?: string;
+}
+
+export interface StartedRunExecution {
+  runId: string;
+  nodeRunId: string;
+  taskId: string;
+  status: 'running';
+  completion: Promise<RunExecutionOutcome>;
 }
 
 export const codexAdapterRegistry: AgentAdapterRegistry = {
@@ -73,6 +82,13 @@ export class RunOrchestrator {
     ir: WorkflowIrL2Input,
     inputs: Readonly<Record<string, string>> = {},
   ): Promise<RunExecutionOutcome> {
+    return this.start(ir, inputs).completion;
+  }
+
+  start(
+    ir: WorkflowIrL2Input,
+    inputs: Readonly<Record<string, string>> = {},
+  ): StartedRunExecution {
     if (ir.nodes.length !== 1 || ir.edges.length !== 0) {
       throw new Error('Phase 1 orchestrator requires one root node and no edges.');
     }
@@ -109,19 +125,43 @@ export class RunOrchestrator {
       workDir: workspacePath,
     });
 
+    const executeInput: AgentExecuteInput = {
+      taskId,
+      prompt,
+      workspace: { path: workspacePath, mode: ir.workspace.mode },
+      permissions: {
+        ...ir.policies.default_permissions,
+        mcp_servers: [...ir.policies.default_permissions.mcp_servers],
+      },
+      mcpConfig: [],
+      timeoutSeconds: ir.policies.timeout_seconds,
+    };
+
+    return {
+      runId,
+      nodeRunId,
+      taskId,
+      status: 'running',
+      completion: this.completeRun(
+        runId,
+        nodeRunId,
+        taskId,
+        adapter,
+        executeInput,
+      ),
+    };
+  }
+
+  private async completeRun(
+    runId: string,
+    nodeRunId: string,
+    taskId: string,
+    adapter: AgentAdapter,
+    executeInput: AgentExecuteInput,
+  ): Promise<RunExecutionOutcome> {
     let result: AgentResult;
     try {
-      const execution = adapter.execute({
-        taskId,
-        prompt,
-        workspace: { path: workspacePath, mode: ir.workspace.mode },
-        permissions: {
-          ...ir.policies.default_permissions,
-          mcp_servers: [...ir.policies.default_permissions.mcp_servers],
-        },
-        mcpConfig: [],
-        timeoutSeconds: ir.policies.timeout_seconds,
-      });
+      const execution = adapter.execute(executeInput);
       [result] = await Promise.all([
         execution.result,
         this.persistAgentEvents(taskId, execution.events),
