@@ -6,7 +6,11 @@ test('codex builder argv uses only supported non-interactive flags', () => {
   const [cmd, args] = resolve('codex', 'build', 'do the thing');
 
   assert.equal(cmd, 'codex');
-  assert.deepEqual(args, ['exec', '--sandbox', 'workspace-write', 'do the thing']);
+  assert.deepEqual(args, [
+    'exec', '--sandbox', 'workspace-write',
+    '-c', 'sandbox_workspace_write.network_access=true',
+    'do the thing',
+  ]);
 });
 
 test('codex builder never emits the removed --ask-for-approval flag', () => {
@@ -17,13 +21,15 @@ test('codex builder never emits the removed --ask-for-approval flag', () => {
   assert.ok(!args.includes('--ask-for-approval'), 'argv must not contain --ask-for-approval');
 });
 
-test('codex builder keeps the workspace-write sandbox (unattended, no wider grant)', () => {
+test('codex builder keeps the workspace-write sandbox: registry network, no full access', () => {
   const [, args] = resolve('codex', 'build', 'p');
 
   const i = args.indexOf('--sandbox');
   assert.ok(i >= 0, 'argv must set --sandbox');
   assert.equal(args[i + 1], 'workspace-write');
-  // No broader escape hatches that would expand permissions beyond the workspace.
+  // Registry network so pnpm can fetch newly introduced deps (issue #30);
+  // still no escape hatches that would expand writes beyond the worktree.
+  assert.ok(args.includes('sandbox_workspace_write.network_access=true'));
   assert.ok(!args.includes('--dangerously-bypass-approvals-and-sandbox'));
   assert.ok(!args.includes('danger-full-access'));
 });
