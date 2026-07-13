@@ -4,7 +4,7 @@
 // 里读码 + 实机执行验证命令，产出交给脚本上报——见 review.mjs）。
 // 新增一家本地 CLI = 在 ADAPTERS 里加一条三元组。云通道不在此文件（已按 D9 移出执行面）。
 // 注意：键序即缺省优先序——AGENTS[0] 是 watch/propose 未指定时的缺省 agent。
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 
 export const ADAPTERS = {
   codex: {
@@ -72,13 +72,34 @@ export function resolve(agentName, role, prompt) {
   return a[role](prompt);
 }
 
-// 实时跑（builder）：继承 stdio，全过程在你终端可见。env 用于注入 agent 的 git 身份（agentEnv）。
+// 实时跑（builder/proposer）：继承 stdio，全过程在你终端可见。env 用于注入 agent 的 git 身份（agentEnv）。
 // 注意：退出码 ≠ 任务成败（opencode 退出码 0 也可能失败，见 PRD §3.2）——dispatch 以本地
 // 确定性检查判成败，退出码非 0 只按基础设施故障处理。
-export function runLive([cmd, args], cwd, env) {
-  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit', env });
-  if (r.error) throw new Error(`启动 ${cmd} 失败：${r.error.message}（是否已安装并在 PATH？）`);
-  return r.status ?? 0;
+// detached + 可选超时：挂死的 builder（网络黑洞等）不得无限占用派发槽——超时整树击杀
+// （SIGTERM → 10s 宽限 → SIGKILL，同 runCapture），timedOut 由调用方按基础设施故障停手。
+export function runLive([cmd, args], cwd, env, { timeoutMs = 0 } = {}) {
+  return new Promise((done, fail) => {
+    const child = spawn(cmd, args, { cwd, env, detached: true, stdio: 'inherit' });
+    child.on('error', (e) => fail(new Error(`启动 ${cmd} 失败：${e.message}（是否已安装并在 PATH？）`)));
+    const killTree = (sig) => { try { process.kill(-child.pid, sig); } catch { /* 已退出 */ } };
+    let timedOut = false;
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        killTree('SIGTERM');
+        setTimeout(() => killTree('SIGKILL'), 10_000).unref();
+      }, timeoutMs)
+      : null;
+    const onHostSignal = () => { killTree('SIGKILL'); process.exit(143); };
+    process.once('SIGTERM', onHostSignal);
+    process.once('SIGINT', onHostSignal);
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      process.removeListener('SIGTERM', onHostSignal);
+      process.removeListener('SIGINT', onHostSignal);
+      done({ status: code ?? 0, timedOut });
+    });
+  });
 }
 
 // 捕获跑（reviewer）：拿 stdout 当评审产出，由调用方上报到 GitHub。
