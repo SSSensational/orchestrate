@@ -39,6 +39,11 @@ describe('RunStore', () => {
       'workflow_runs',
     ]);
     expect(store.database.pragma('foreign_keys', { simple: true })).toBe(1);
+    expect(
+      (
+        store.database.pragma('index_list(artifacts)') as { name: string }[]
+      ).map(({ name }) => name),
+    ).toContain('artifacts_node_run_id_idx');
   });
 
   it('freezes the run IR snapshot before caller mutation', () => {

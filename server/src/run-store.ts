@@ -7,9 +7,9 @@ export interface SqliteStatement {
   all(...parameters: unknown[]): unknown[];
 }
 
-interface SqliteTransaction<Result> {
-  (): Result;
-  immediate(): Result;
+interface SqliteTransaction<Parameters extends unknown[], Result> {
+  (...parameters: Parameters): Result;
+  immediate(...parameters: Parameters): Result;
 }
 
 export interface SqliteDatabase {
@@ -17,7 +17,9 @@ export interface SqliteDatabase {
   exec(sql: string): this;
   pragma(source: string, options?: { simple?: boolean }): unknown;
   prepare(sql: string): SqliteStatement;
-  transaction<Result>(fn: () => Result): SqliteTransaction<Result>;
+  transaction<Parameters extends unknown[], Result>(
+    fn: (...parameters: Parameters) => Result,
+  ): SqliteTransaction<Parameters, Result>;
 }
 
 const Database = createRequire(import.meta.url)('better-sqlite3') as new (
@@ -68,9 +70,14 @@ const schema = `
     run_id TEXT NOT NULL REFERENCES workflow_runs(id),
     node_run_id TEXT REFERENCES workflow_node_runs(id),
     type TEXT NOT NULL, name TEXT NOT NULL,
-    dedupe_key TEXT, data_json TEXT NOT NULL,
+    -- PRD §7; single-channel-workflow-slice defers reduce-node use past P1.
+    dedupe_key TEXT,
+    data_json TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+
+  CREATE INDEX IF NOT EXISTS artifacts_node_run_id_idx
+  ON artifacts (node_run_id);
 
   CREATE TABLE IF NOT EXISTS run_events (
     run_id TEXT NOT NULL REFERENCES workflow_runs(id),
@@ -217,11 +224,107 @@ export interface ArtifactRow {
 
 export class RunStore {
   readonly database: SqliteDatabase;
+  private readonly insertEventStatement: SqliteStatement;
+  private readonly updateRunStatusStatement: SqliteStatement;
+  private readonly getNodeRunForStatusStatement: SqliteStatement;
+  private readonly updateNodeRunStatusStatement: SqliteStatement;
+  private readonly getAgentTaskForStatusStatement: SqliteStatement;
+  private readonly updateAgentTaskStatusStatement: SqliteStatement;
+  private readonly appendEventTransaction: SqliteTransaction<
+    [runId: string, event: RunEventInput],
+    RunEventRow
+  >;
+  private readonly setRunStatusTransaction: SqliteTransaction<
+    [runId: string, status: string, event: RunEventInput],
+    RunEventRow
+  >;
+  private readonly setNodeRunStatusTransaction: SqliteTransaction<
+    [nodeRunId: string, status: string, event: RunEventInput],
+    RunEventRow
+  >;
+  private readonly setAgentTaskStatusTransaction: SqliteTransaction<
+    [taskId: string, status: string, event: RunEventInput],
+    RunEventRow
+  >;
 
   constructor(path: string | Buffer = ':memory:') {
     this.database = new Database(path);
     this.database.pragma('foreign_keys = ON');
     this.database.exec(schema);
+    this.insertEventStatement = this.database.prepare(
+      `INSERT INTO run_events
+        (run_id, seq, node_id, type, data_json, created_at)
+       SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?
+       FROM run_events
+       WHERE run_id = ?
+       RETURNING *`,
+    );
+    this.updateRunStatusStatement = this.database.prepare(
+      'UPDATE workflow_runs SET status = ? WHERE id = ?',
+    );
+    this.getNodeRunForStatusStatement = this.database.prepare(
+      'SELECT run_id, node_id FROM workflow_node_runs WHERE id = ?',
+    );
+    this.updateNodeRunStatusStatement = this.database.prepare(
+      'UPDATE workflow_node_runs SET status = ? WHERE id = ?',
+    );
+    this.getAgentTaskForStatusStatement = this.database.prepare(
+      `SELECT workflow_node_runs.run_id, workflow_node_runs.node_id
+       FROM agent_tasks
+       JOIN workflow_node_runs
+         ON workflow_node_runs.id = agent_tasks.node_run_id
+       WHERE agent_tasks.id = ?`,
+    );
+    this.updateAgentTaskStatusStatement = this.database.prepare(
+      'UPDATE agent_tasks SET status = ? WHERE id = ?',
+    );
+
+    this.appendEventTransaction = this.database.transaction(
+      (runId: string, event: RunEventInput) => this.insertEvent(runId, event),
+    );
+    this.setRunStatusTransaction = this.database.transaction(
+      (runId: string, status: string, event: RunEventInput) => {
+        const result = this.updateRunStatusStatement.run(
+          requiredText(status, 'status'),
+          runId,
+        );
+        if (Number(result.changes) !== 1)
+          throw new Error(`Run not found: ${runId}`);
+        return this.insertEvent(runId, event);
+      },
+    );
+    this.setNodeRunStatusTransaction = this.database.transaction(
+      (nodeRunId: string, status: string, event: RunEventInput) => {
+        const node = this.getNodeRunForStatusStatement.get(nodeRunId) as
+          | { run_id: string; node_id: string }
+          | undefined;
+        if (!node) throw new Error(`Node run not found: ${nodeRunId}`);
+        this.updateNodeRunStatusStatement.run(
+          requiredText(status, 'status'),
+          nodeRunId,
+        );
+        return this.insertEvent(node.run_id, {
+          ...event,
+          nodeId: node.node_id,
+        });
+      },
+    );
+    this.setAgentTaskStatusTransaction = this.database.transaction(
+      (taskId: string, status: string, event: RunEventInput) => {
+        const task = this.getAgentTaskForStatusStatement.get(taskId) as
+          | { run_id: string; node_id: string }
+          | undefined;
+        if (!task) throw new Error(`Agent task not found: ${taskId}`);
+        this.updateAgentTaskStatusStatement.run(
+          requiredText(status, 'status'),
+          taskId,
+        );
+        return this.insertEvent(task.run_id, {
+          ...event,
+          nodeId: task.node_id,
+        });
+      },
+    );
   }
 
   close(): void {
@@ -325,9 +428,7 @@ export class RunStore {
   }
 
   appendEvent(runId: string, event: RunEventInput): RunEventRow {
-    return this.database
-      .transaction(() => this.insertEvent(runId, event))
-      .immediate();
+    return this.appendEventTransaction.immediate(runId, event);
   }
 
   setRunStatus(
@@ -335,16 +436,7 @@ export class RunStore {
     status: string,
     event: RunEventInput,
   ): RunEventRow {
-    return this.database
-      .transaction(() => {
-        const result = this.database
-          .prepare('UPDATE workflow_runs SET status = ? WHERE id = ?')
-          .run(requiredText(status, 'status'), runId);
-        if (Number(result.changes) !== 1)
-          throw new Error(`Run not found: ${runId}`);
-        return this.insertEvent(runId, event);
-      })
-      .immediate();
+    return this.setRunStatusTransaction.immediate(runId, status, event);
   }
 
   setNodeRunStatus(
@@ -352,25 +444,11 @@ export class RunStore {
     status: string,
     event: RunEventInput,
   ): RunEventRow {
-    return this.database
-      .transaction(() => {
-        const node = this.database
-          .prepare(
-            'SELECT run_id, node_id FROM workflow_node_runs WHERE id = ?',
-          )
-          .get(nodeRunId) as
-          | { run_id: string; node_id: string }
-          | undefined;
-        if (!node) throw new Error(`Node run not found: ${nodeRunId}`);
-        this.database
-          .prepare('UPDATE workflow_node_runs SET status = ? WHERE id = ?')
-          .run(requiredText(status, 'status'), nodeRunId);
-        return this.insertEvent(node.run_id, {
-          ...event,
-          nodeId: node.node_id,
-        });
-      })
-      .immediate();
+    return this.setNodeRunStatusTransaction.immediate(
+      nodeRunId,
+      status,
+      event,
+    );
   }
 
   setAgentTaskStatus(
@@ -378,27 +456,7 @@ export class RunStore {
     status: string,
     event: RunEventInput,
   ): RunEventRow {
-    return this.database
-      .transaction(() => {
-        const task = this.database
-          .prepare(
-            `SELECT workflow_node_runs.run_id, workflow_node_runs.node_id
-             FROM agent_tasks
-             JOIN workflow_node_runs
-               ON workflow_node_runs.id = agent_tasks.node_run_id
-             WHERE agent_tasks.id = ?`,
-          )
-          .get(taskId) as { run_id: string; node_id: string } | undefined;
-        if (!task) throw new Error(`Agent task not found: ${taskId}`);
-        this.database
-          .prepare('UPDATE agent_tasks SET status = ? WHERE id = ?')
-          .run(requiredText(status, 'status'), taskId);
-        return this.insertEvent(task.run_id, {
-          ...event,
-          nodeId: task.node_id,
-        });
-      })
-      .immediate();
+    return this.setAgentTaskStatusTransaction.immediate(taskId, status, event);
   }
 
   getEvents(runId: string, afterSeq = 0): RunEventRow[] {
@@ -447,22 +505,13 @@ export class RunStore {
   }
 
   private insertEvent(runId: string, event: RunEventInput): RunEventRow {
-    return this.database
-      .prepare(
-        `INSERT INTO run_events
-          (run_id, seq, node_id, type, data_json, created_at)
-         SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?
-         FROM run_events
-         WHERE run_id = ?
-         RETURNING *`,
-      )
-      .get(
-        runId,
-        event.nodeId ?? null,
-        requiredText(event.type, 'event.type'),
-        event.data === undefined ? null : toJson(event.data),
-        event.createdAt ?? Date.now(),
-        runId,
-      ) as RunEventRow;
+    return this.insertEventStatement.get(
+      runId,
+      event.nodeId ?? null,
+      requiredText(event.type, 'event.type'),
+      event.data === undefined ? null : toJson(event.data),
+      event.createdAt ?? Date.now(),
+      runId,
+    ) as RunEventRow;
   }
 }
