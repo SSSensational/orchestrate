@@ -10,6 +10,7 @@
   },
   "scripts": {
     "adapter:smoke": "pnpm build && pnpm --filter @agent-workflow/server adapter:smoke",
+    "workflow:smoke": "pnpm build && pnpm --filter @agent-workflow/examples workflow:smoke",
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck",
     "lint": "pnpm --recursive lint",

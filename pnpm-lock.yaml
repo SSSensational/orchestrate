@@ -36,7 +36,11 @@ importers:
         specifier: 43.1.0
         version: 43.1.0
 
-  examples: {}
+  examples:
+    dependencies:
+      '@agent-workflow/server':
+        specifier: workspace:*
+        version: link:../server
 
   server:
     dependencies:
