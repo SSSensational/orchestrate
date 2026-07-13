@@ -9,5 +9,8 @@
     "build": "tsc --build",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "lint": "eslint src"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.10.1"
   }
 }
