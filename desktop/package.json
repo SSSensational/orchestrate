@@ -9,9 +9,10 @@
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "lint": "eslint src",
     "start": "electron .",
-    "smoke": "electron . --smoke"
+    "smoke": "electron-rebuild --force --which-module better-sqlite3 --module-dir ../server && electron . --smoke"
   },
   "devDependencies": {
+    "@electron/rebuild": "4.2.0",
     "electron": "43.1.0"
   }
 }
