@@ -75,10 +75,14 @@ function localChecks(cwd) {
   const names = ['typecheck', 'lint', 'test'].filter((n) => scripts[n]);
   if (names.length === 0) return { ok: true, skipped: true };
   for (const name of names) {
-    const r = spawnSync('pnpm', ['-s', 'run', name], { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+    // 不加 -s：静默模式会吞掉 run 前置阶段（自动 pnpm install 等）的报错，
+    // 失败时零输出 → 回喂 builder 的日志为空，修复环变成盲修（issue #26 实例）
+    const r = spawnSync('pnpm', ['run', name], { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
     if ((r.status ?? 1) !== 0) {
       console.error(`✗ 本地检查未过：pnpm run ${name}`);
-      return { ok: false, failed: name, log: `$ pnpm run ${name}\n${r.stdout || ''}\n${r.stderr || ''}`.trim() };
+      const out = `${r.stdout || ''}\n${r.stderr || ''}`.trim();
+      return { ok: false, failed: name, log: `$ pnpm run ${name}\n${out
+        || '（检查失败但无任何输出——命令可能未真正运行：依赖安装失败、pnpm 不在 PATH 等环境问题，先排查环境而非改代码）'}` };
     }
     console.log(`✓ 本地检查：pnpm run ${name}`);
   }
