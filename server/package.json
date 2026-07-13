@@ -8,11 +8,15 @@
   "scripts": {
     "adapter:smoke": "node dist/codex-app-server-live-smoke.js",
     "build": "tsc --build",
+    "start": "node dist/runtime-server.js",
     "typecheck": "pnpm --filter @agent-workflow/shared build && tsc --project tsconfig.json --noEmit",
     "lint": "eslint src"
   },
   "dependencies": {
     "@agent-workflow/shared": "workspace:*",
-    "better-sqlite3": "12.10.1"
+    "@hono/node-server": "1.19.14",
+    "better-sqlite3": "12.10.1",
+    "hono": "4.12.27",
+    "ws": "8.21.0"
   }
 }

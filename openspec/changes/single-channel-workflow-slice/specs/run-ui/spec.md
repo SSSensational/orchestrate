@@ -4,7 +4,7 @@
 
 ### Requirement: Realtime run read API
 
-The server SHALL expose a loopback HTTP endpoint that starts the bundled workflow and read endpoints for its persisted run snapshot and artifacts. It SHALL expose a WebSocket event stream sourced from persisted `run_events`; a client connecting with its last received `seq` SHALL receive every later persisted event in order before receiving new live events.
+The server SHALL expose `POST /api/runs` on a loopback-only listener to start the bundled workflow, plus `GET /api/runs/:run_id` and `GET /api/runs/:run_id/artifacts` for its persisted run snapshot and artifacts. It SHALL expose `/api/runs/:run_id/events?after_seq=:seq` as a WebSocket event stream sourced from persisted `run_events`; a client connecting with its last received `seq` SHALL receive every later persisted event in order before receiving new live events. Each WebSocket message SHALL be the JSON serialization of its `run_events` row, including `run_id` and `seq`.
 
 #### Scenario: Start endpoint returns a persisted run
 
@@ -18,7 +18,7 @@ The server SHALL expose a loopback HTTP endpoint that starts the bundled workflo
 - **GIVEN** a client subscribed to a newly started run from `seq = 0`
 - **WHEN** the run emits lifecycle and agent text events
 - **THEN** the client receives each event in strictly increasing `seq` order
-- **AND** every received event can be read from SQLite with the same run id, seq, type, and data
+- **AND** every received message equals the corresponding SQLite row for its run id, seq, node id, type, data JSON, and creation time
 
 #### Scenario: Reconnect catches up without loss or duplication
 
@@ -29,7 +29,7 @@ The server SHALL expose a loopback HTTP endpoint that starts the bundled workflo
 
 ### Requirement: Electron thin shell owns the server process lifecycle
 
-The Electron app SHALL start the runtime server as a separate Node child process bound only to loopback, wait for an explicit readiness message containing its actual port, and then open the run UI. Closing the app SHALL terminate that child process. Workflow validation, orchestration, adapter execution, and SQLite access SHALL remain outside the Electron main process.
+The Electron app SHALL start the runtime server as a separate Node child process bound only to loopback, wait for an explicit `{ "type": "ready", "host": "127.0.0.1", "port": <actual-port> }` readiness message, and then open the run UI. Closing the app SHALL terminate that child process. Workflow validation, orchestration, adapter execution, and SQLite access SHALL remain outside the Electron main process.
 
 #### Scenario: Desktop launch starts one ready server and one window
 
