@@ -115,8 +115,11 @@ export function runCapture([cmd, args], cwd, { timeoutMs = 0 } = {}) {
   });
 }
 
+// 缺省 60s 超时：gh 是同步调用，网络级挂死会冻结调用方主循环（watch 曾被一个
+// 挂死 12 分钟的 issue list 整体冻住）。正常 API 调用秒级返回；超时抛错由调用方
+// 既有的 catch/重试兜底。调用方可传 opts.timeout 覆盖。
 export function gh(args, opts = {}) {
-  return execFileSync('gh', args, { encoding: 'utf8', ...opts });
+  return execFileSync('gh', args, { encoding: 'utf8', timeout: 60_000, ...opts });
 }
 
 // advisor-review 存在性门禁（D15）：required commit status，卡「顾问评论已存在（或已明确放弃）」，
