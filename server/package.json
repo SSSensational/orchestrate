@@ -6,11 +6,13 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
+    "adapter:smoke": "node dist/codex-app-server-live-smoke.js",
     "build": "tsc --build",
-    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @agent-workflow/shared build && tsc --project tsconfig.json --noEmit",
     "lint": "eslint src"
   },
   "dependencies": {
+    "@agent-workflow/shared": "workspace:*",
     "better-sqlite3": "12.10.1"
   }
 }
