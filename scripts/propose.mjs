@@ -68,9 +68,13 @@ const prompt = [
   '- 卡住同一错误两次：在 issue 评论记录卡点、打 needs-human label、停手。',
 ].join('\n');
 
-// 4) 跑起草者（可写工作区，实时可见）
-console.log(`\n== proposer：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}\n`);
-const code = runLive(resolve(agent, 'build', prompt), dir, agentEnv(agent));
+// 4) 跑起草者（可写工作区，实时可见；硬超时同 dispatch 的 builder 边，0 = 关闭）
+const rawTimeout = Number(process.env.BUILDER_TIMEOUT_MINUTES ?? 45);
+const TIMEOUT_MIN = Number.isFinite(rawTimeout) && rawTimeout >= 0 ? rawTimeout : 45;
+console.log(`\n== proposer：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}${TIMEOUT_MIN ? `  ·  限时 ${TIMEOUT_MIN}min` : ''}\n`);
+const { status: code, timedOut } = await runLive(resolve(agent, 'build', prompt), dir, agentEnv(agent),
+  { timeoutMs: TIMEOUT_MIN * 60_000 });
+if (timedOut) { console.error(`\nproposer 超时（${TIMEOUT_MIN} 分钟）——已整树终止，按基础设施故障处理；未开 PR。`); process.exit(1); }
 if (code !== 0) { console.error(`\nproposer 退出码 ${code}——检查上面输出；未开 PR。`); process.exit(code); }
 
 // 5) 兜底提交（agent 若留了未提交改动，替它 commit；author/committer = 干活的 agent）

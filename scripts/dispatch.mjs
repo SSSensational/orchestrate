@@ -20,6 +20,10 @@ if (!num) {
 }
 agentGhEnv();
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.DISPATCH_MAX_ATTEMPTS || 3));
+// builder 会话硬超时（reviewer 硬超时 D15 的 builder 边）：挂死的 CLI（网络黑洞等）
+// 不得无限占用派发槽。0 = 关闭。
+const rawTimeout = Number(process.env.BUILDER_TIMEOUT_MINUTES ?? 45);
+const TIMEOUT_MIN = Number.isFinite(rawTimeout) && rawTimeout >= 0 ? rawTimeout : 45;
 
 // 1) 读 issue（标题 / 正文=验收判据 / labels）
 const issue = JSON.parse(gh(['issue', 'view', num, '--json', 'title,body,labels,number']));
@@ -116,8 +120,10 @@ let prompt = reviewFeedback
     ].join('\n');
 let checks = { ok: true, skipped: true };
 for (let attempt = 1; ; attempt++) {
-  console.log(`\n== builder：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}  ·  尝试 ${attempt}/${MAX_ATTEMPTS}\n`);
-  const code = runLive(resolve(agent, 'build', prompt), dir, agentEnv(agent));
+  console.log(`\n== builder：${ADAPTERS[agent].displayName}  ·  issue #${num}  ·  ${dir}  ·  尝试 ${attempt}/${MAX_ATTEMPTS}${TIMEOUT_MIN ? `  ·  限时 ${TIMEOUT_MIN}min` : ''}\n`);
+  const { status: code, timedOut } = await runLive(resolve(agent, 'build', prompt), dir, agentEnv(agent),
+    { timeoutMs: TIMEOUT_MIN * 60_000 });
+  if (timedOut) { console.error(`\nbuilder 超时（${TIMEOUT_MIN} 分钟）——已整树终止，按基础设施故障处理；未开 PR。`); process.exit(1); }
   if (code !== 0) { console.error(`\nbuilder 退出码 ${code}（按基础设施故障处理）——检查上面输出；未开 PR。`); process.exit(code); }
   checks = localChecks(dir);
   if (checks.ok) break;
