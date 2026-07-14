@@ -4,7 +4,7 @@ GitHub issues [#24](https://github.com/SSSensational/orchestrate/issues/24) and 
 
 ## What Changes
 
-- Add a dedicated test-writer dispatch path to the orchestration scripts, since the existing dispatcher forbids builders from touching `acceptance/**` and never runs `pnpm acceptance` in its local checks.
+- Add a dedicated test-writer dispatch path to the orchestration scripts, since the existing dispatcher forbids builders from touching `acceptance/**` and never runs `pnpm acceptance` in its local checks. The role is selected by a `role:test-writer` label or a `[test-writer]` title marker; the marker is pre-embedded in the suite task's title so the issue seeded before this path exists is already machine-recognizable.
 - Add a black-box `workflow-ir` acceptance suite under `acceptance/**`, derived only from #24, #25, and the source `workflow-ir` delta spec, delivered through that test-writer path.
 - Cover L1 success, strict unknown-field rejection, and the public structured-error contract from #24.
 - Cover L2 success, duplicate ids, dangling edges, unreachable nodes, unresolved templates, missing agents, missing capabilities, valid transitive-upstream artifact references, and deterministic error ordering from #25.
@@ -19,6 +19,7 @@ GitHub issues [#24](https://github.com/SSSensational/orchestrate/issues/24) and 
 
 - `workflow-ir`: Adds the independent M2/M3 acceptance evidence required for the `workflow-ir` capability currently defined by `single-channel-workflow-slice`; it does not add or alter runtime behavior.
 - `build-pipeline`: The acceptance command fails when it collects zero tests, and the required `ci` check executes the acceptance suite; the existing test/acceptance routing split is unchanged.
+- `orchestration`: The dispatcher supports a marker-selected test-writer role whose workspace, prompt discipline, and local checks match `acceptance/**` ownership, and the seeder's task parsing is specified and regression-tested.
 
 ### Modified Capabilities
 
@@ -30,7 +31,7 @@ None. There is no archived `workflow-ir` living spec yet; this change adds an ac
 - Task 2's implementation PR adds only files under `acceptance/**`; no product source, existing tests, configuration, documentation, dependencies, or other OpenSpec changes are part of it.
 - Task 3's implementation PR modifies only `package.json`, `vitest.acceptance.config.ts`, and `.github/workflows/ci.yml`.
 - `pnpm test` continues to exclude `acceptance/**`; `pnpm acceptance` begins collecting and executing the new suite, fails on zero tests, and becomes enforced by the required `ci` check.
-- Standalone issue [#45](https://github.com/SSSensational/orchestrate/issues/45) is absorbed by task 3 and is closed by that task's merged implementation PR via `Closes #45`, per the repository's merged-PR-only closure rule.
+- Standalone issue [#45](https://github.com/SSSensational/orchestrate/issues/45) is absorbed by task 3. Because the dispatcher's generated PR body only closes the task's own issue, the final reviewer adds `Closes #45` to task 3's PR body before merging, so #45 is still closed by a merged PR per the repository rule.
 - Any runtime defect exposed by the suite remains outside this change and must be handled by a separate issue such as [#46](https://github.com/SSSensational/orchestrate/issues/46).
 
 ## 验收判据
@@ -41,7 +42,8 @@ None. There is no archived `workflow-ir` living spec yet; this change adds an ac
 - [ ] The #25 tests prove the six L2 failure categories return pairwise-distinct, repeat-stable error codes without asserting literal spellings.
 - [ ] `pnpm test` exits successfully without collecting any new acceptance file or test, while `pnpm acceptance` collects and executes every new acceptance file and test.
 - [ ] `pnpm acceptance` exits non-zero when it collects zero tests, and the required `ci` check executes the suite with `#24`/`#25`-tagged titles visible in its log.
-- [ ] The test-writer dispatch path permits only added `acceptance/**` files, runs `pnpm acceptance` in its local checks, and is selectable by seed/watch.
+- [ ] The test-writer dispatch path permits only added `acceptance/**` files, runs `pnpm acceptance` in its local checks, and is selected via the pre-embedded `[test-writer]` title marker or `role:test-writer` label on seeded issues.
+- [ ] The seeder's task parsing (numbered headings, indented criteria, excluded blockquotes) is covered by a regression test.
 - [ ] Task 1's PR diff modifies only `scripts/**` and operational docs; task 2's PR diff contains only added files below `acceptance/**` and passes the repository's pure-test `test-guard` rule; task 3's PR diff modifies only the three build-pipeline files named above.
 
 ## Non-goals

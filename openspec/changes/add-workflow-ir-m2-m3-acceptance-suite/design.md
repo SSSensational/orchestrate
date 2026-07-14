@@ -53,6 +53,8 @@ The rejected alternative is leaving the wiring to standalone issue #45. That seq
 
 `scripts/dispatch.mjs` instructs builders never to create or modify `acceptance/**`, and its local check loop runs typecheck/lint/test but never `pnpm acceptance`, so the suite cannot be delivered through the existing automation without violating ownership rules. Task 1 adds an explicitly selected test-writer role with an inverted workspace contract — only added `acceptance/**` files are allowed — and a local check loop that runs `pnpm typecheck`, `pnpm lint`, and `pnpm acceptance`, reusing the existing worktree, PR, refeed, and advisory-review flow.
 
+Seeding happens once, when this proposal merges — before task 1's dispatcher change exists. The role selector therefore cannot live in tooling state: it is pre-embedded as a `[test-writer]` marker in task 2's title, which the seeder copies verbatim into the issue title, and task 1's dispatcher recognizes that marker (or an equivalent `role:test-writer` label) afterwards. If task 2 is dispatched before task 1 merges, the ordinary builder contract still forbids `acceptance/**`, so the run fails fast instead of producing an unowned suite; task 2's first criterion makes the ordering explicit.
+
 The rejected alternative is hand-crafting the suite PR outside the pipeline. That bypasses dispatch's discipline for exactly the artifact whose independence matters most, and leaves nothing reusable for future test-writer issues.
 
 ## Risks / Trade-offs
