@@ -11,6 +11,12 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { ADAPTERS, AGENTS, agentEnv, agentFromLabels, agentGhEnv, ghAgent, resolve, runLive, gh } from './agents.mjs';
+import {
+  isTestWriterIssue,
+  localCheckNames,
+  testWriterScopeCheck,
+  testWriterTaskContext,
+} from './dispatch-policy.mjs';
 import { latestChangesFeedback } from './review-policy.mjs';
 
 const [num, override, reviewPr] = process.argv.slice(2);
@@ -28,6 +34,7 @@ const TIMEOUT_MIN = Number.isFinite(rawTimeout) && rawTimeout >= 0 ? rawTimeout 
 // 1) 读 issue（标题 / 正文=验收判据 / labels）
 const issue = JSON.parse(gh(['issue', 'view', num, '--json', 'title,body,labels,number']));
 const labels = issue.labels.map((l) => l.name);
+const testWriter = isTestWriterIssue(issue);
 const agent = override || agentFromLabels(labels, 'build');
 if (!agent) {
   console.error(`issue #${num} 未指定 builder。请打 label agent:build:<${AGENTS.join('|')}>，或传第二参数。`);
@@ -60,23 +67,51 @@ if (!existsSync(dir)) {
 }
 
 // 3) 纪律块（初始与续跑 prompt 共用；agent 中立：任一 CLI 读同一份）
-const DISCIPLINE = [
+const DISCIPLINE = (testWriter ? [
+  '--- test-writer 纪律（详见仓库根 AGENTS.md）---',
+  '- 任务判定依据仅限本 prompt 提供的源 issue 验收判据与引用的 delta specs。',
+  '- 禁止读取产品实现文件与既有单元/集成测试；不得从实现或 builder 测试反推断言。',
+  '- 工作区只允许新增 acceptance/** 文件；禁止修改/删除既有文件，禁止改动任何其他路径。',
+  '- 在本 worktree 内实现 + 自测 + git commit（分支已建好；PR 由本脚本创建，你不要自己开 PR）。',
+  '- 卡住同一错误两次：在 issue 评论记录卡点、打 needs-human label、停手。',
+] : [
   '--- 纪律（详见仓库根 AGENTS.md）---',
   '- 一次只做这一个 issue，只改必要范围；不顺手重构、不修范围外问题。',
   '- 禁止占位符 / stub；改行为必须同步对应 openspec spec。',
   '- 禁止创建 / 修改 / 删除 acceptance/**（验收测试由 test-writer 拥有，test-guard 强制）。',
   '- 在本 worktree 内实现 + 自测 + git commit（分支已建好；PR 由本脚本创建，你不要自己开 PR）。',
   '- 卡住同一错误两次：在 issue 评论记录卡点、打 needs-human label、停手。',
-].join('\n');
+]).join('\n');
+const taskContext = testWriter ? testWriterTaskContext(dir, issue) : (issue.body || '');
 
-// 本地确定性检查 = required checks 的本地镜像（ci 的 typecheck / lint / test 子集）。
-// 脚手架未落地（无 package.json 或无对应 script）时跳过——远端 required checks 仍兜底。
-function localChecks(cwd) {
+// 普通 builder 跑 required checks 的本地镜像；test-writer 先验工作区范围，再跑其专用命令集。
+// 普通脚手架未落地（无 package.json 或无对应 script）时跳过——远端 required checks 仍兜底。
+function localChecks(cwd, forTestWriter) {
+  if (forTestWriter) {
+    const scope = testWriterScopeCheck(cwd);
+    if (!scope.ok) return scope;
+  }
   const pkg = join(cwd, 'package.json');
-  if (!existsSync(pkg)) return { ok: true, skipped: true };
+  if (!existsSync(pkg)) return forTestWriter
+    ? { ok: false, failed: 'check-contract', command: 'test-writer local checks', log: 'package.json 不存在，无法运行 test-writer 必需检查' }
+    : { ok: true, skipped: true };
   let scripts = {};
-  try { scripts = JSON.parse(readFileSync(pkg, 'utf8')).scripts || {}; } catch { return { ok: true, skipped: true }; }
-  const names = ['typecheck', 'lint', 'test'].filter((n) => scripts[n]);
+  try { scripts = JSON.parse(readFileSync(pkg, 'utf8')).scripts || {}; } catch (error) {
+    return forTestWriter
+      ? { ok: false, failed: 'check-contract', command: 'test-writer local checks', log: `package.json 无法解析：${error.message}` }
+      : { ok: true, skipped: true };
+  }
+  const required = localCheckNames(forTestWriter);
+  const missing = required.filter((name) => !scripts[name]);
+  if (forTestWriter && missing.length) {
+    return {
+      ok: false,
+      failed: 'check-contract',
+      command: 'test-writer local checks',
+      log: `package.json 缺少 test-writer 必需 scripts：${missing.join(', ')}`,
+    };
+  }
+  const names = required.filter((name) => scripts[name]);
   if (names.length === 0) return { ok: true, skipped: true };
   for (const name of names) {
     // 不加 -s：静默模式会吞掉 run 前置阶段（自动 pnpm install 等）的报错，
@@ -85,7 +120,7 @@ function localChecks(cwd) {
     if ((r.status ?? 1) !== 0) {
       console.error(`✗ 本地检查未过：pnpm run ${name}`);
       const out = `${r.stdout || ''}\n${r.stderr || ''}`.trim();
-      return { ok: false, failed: name, log: `$ pnpm run ${name}\n${out
+      return { ok: false, failed: name, command: `pnpm run ${name}`, log: `$ pnpm run ${name}\n${out
         || '（检查失败但无任何输出——命令可能未真正运行：依赖安装失败、pnpm 不在 PATH 等环境问题，先排查环境而非改代码）'}` };
     }
     console.log(`✓ 本地检查：pnpm run ${name}`);
@@ -94,6 +129,7 @@ function localChecks(cwd) {
 }
 
 const tail = (s, n) => s.split('\n').slice(-n).join('\n');
+const failedCommand = (result) => result.command || `pnpm run ${result.failed}`;
 
 // 4) 重试环：builder 会话 → 本地确定性检查 → 红则失败截尾回喂续跑（≤ MAX_ATTEMPTS）。
 // 成败不以 builder 退出码判定（opencode 退出码 0 也可能失败，见 PRD §3.2）；
@@ -102,7 +138,7 @@ let prompt = reviewFeedback
   ? [
       `复修 GitHub issue #${num}：${issue.title}`,
       '',
-      issue.body || '',
+      taskContext,
       '',
       '下面是顾问对当前 PR 的 CHANGES 意见。逐条判断：有依据的做最小修复；不成立的不要盲从，保留实现交由复审和人终审。',
       '',
@@ -114,7 +150,7 @@ let prompt = reviewFeedback
   : [
       `完成 GitHub issue #${num}：${issue.title}`,
       '',
-      issue.body || '',
+      taskContext,
       '',
       DISCIPLINE,
     ].join('\n');
@@ -125,14 +161,14 @@ for (let attempt = 1; ; attempt++) {
     { timeoutMs: TIMEOUT_MIN * 60_000 });
   if (timedOut) { console.error(`\nbuilder 超时（${TIMEOUT_MIN} 分钟）——已整树终止，按基础设施故障处理；未开 PR。`); process.exit(1); }
   if (code !== 0) { console.error(`\nbuilder 退出码 ${code}（按基础设施故障处理）——检查上面输出；未开 PR。`); process.exit(code); }
-  checks = localChecks(dir);
+  checks = localChecks(dir, testWriter);
   if (checks.ok) break;
   if (attempt >= MAX_ATTEMPTS) {
     // 卡住协议的机器执行版（AGENTS.md 纪律 6）：记录卡点、打 needs-human、停手，不开 PR
     const body = [
       `**dispatch 卡住**：${MAX_ATTEMPTS} 次尝试后本地确定性检查仍未过（builder=${agent}）。`,
       '',
-      `最后一次失败（\`pnpm run ${checks.failed}\`，截尾）：`,
+      `最后一次失败（\`${failedCommand(checks)}\`，截尾）：`,
       '',
       '```',
       tail(checks.log, 60),
@@ -147,11 +183,12 @@ for (let attempt = 1; ; attempt++) {
     console.error(`\n${MAX_ATTEMPTS} 次尝试后检查仍未过——已在 issue 记录卡点并打 needs-human；未开 PR。`);
     process.exit(1);
   }
-  console.log(`\n== 检查未过（pnpm run ${checks.failed}）——失败输出截尾回喂 builder 续跑\n`);
+  console.log(`\n== 检查未过（${failedCommand(checks)}）——失败输出截尾回喂 builder 续跑\n`);
   prompt = [
     `继续 GitHub issue #${num}：${issue.title}`,
     '',
-    `本 worktree 已有一版实现，但本地确定性检查未过（pnpm run ${checks.failed}）。`,
+    ...(testWriter ? [taskContext, ''] : []),
+    `本 worktree 已有一版实现，但本地确定性检查未过（${failedCommand(checks)}）。`,
     '只修检查暴露的问题，不扩大范围；修完自己重跑该检查确认后再收尾。',
     '',
     '--- 检查失败输出（截尾）---',

@@ -27,8 +27,9 @@ gh label create "origin:human"          --color bfdadc --force
 gh label create "origin:ai"             --color 7057ff --force
 gh label create "needs-human"           --color b60205 --force --description "等待人工答复/裁决"
 gh label create "approved-test-change"  --color 0e8a16 --force --description "人工豁免：允许修改既有测试"
-gh label create "ready"                 --color 0e8a16 --force --description "人已判定可开工：无 change/agent:build 走提案，有则直接实现"
+gh label create "ready"                 --color 0e8a16 --force --description "人已判定可开工：无 change/agent:build/test-writer 标记走提案，有则直接实现"
 gh label create "wip"                   --color d93f0b --force --description "watch 已认领、执行中；崩溃遗留由下次启动自动还原为 ready"
+gh label create "role:test-writer"       --color 0e8a16 --force --description "仅新增 acceptance/** 的独立验收测试作者"
 # 角色×agent 选择（本地 dispatch 据此选 builder / reviewer，任意组合、非固定）
 for a in claude codex opencode; do
   gh label create "agent:build:${a}"    --color 1f6feb --force --description "指定 ${a} 为本 issue 的 builder"
