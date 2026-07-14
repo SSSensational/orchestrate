@@ -22,7 +22,7 @@ None.
 ## Impact
 
 - Affected required check: `.github/workflows/test-guard.yml` and any source-controlled policy helper used by that workflow.
-- Affected tests: new deterministic operational tests for the exemption predicate; existing product, unit, integration, and acceptance test contents remain unchanged.
+- Affected tests: new deterministic operational tests plus independently authored `acceptance/**` coverage for the exemption predicate; existing test contents remain unchanged.
 - Affected configuration: the protected repository configuration records the durable GitHub user ID of each human owner allowed to grant the exemption.
 - No product runtime, public API, dependency, workflow-IR, agent adapter, or acceptance-test ownership behavior changes.
 

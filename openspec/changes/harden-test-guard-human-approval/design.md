@@ -14,6 +14,7 @@ This is a security-sensitive but repository-local policy change. It must remain 
 - Reject the repository PAT bot even though GitHub reports its account type as `User`.
 - Keep authorization independent of display name and login changes.
 - Exercise the same predicate used by the workflow with deterministic, network-free tests.
+- Give the independent test-writer a stable black-box policy entrypoint without requiring it to inspect the workflow implementation.
 
 **Non-Goals:**
 
@@ -40,11 +41,11 @@ An event grants the exemption only when all of these conditions hold: it is a `l
 
 Keeping `actor.type === "User"` is defense in depth, not the proof of humanness: the allowlisted durable ID is the decisive boundary. This also makes malformed fixtures and unexpected API payloads fail closed.
 
-### Share the predicate between the workflow and deterministic tests
+### Share one stable predicate between the workflow and tests
 
-The predicate and allowlist will be placed in a small dependency-free JavaScript helper under `.github/**`; `test-guard.yml` will call that helper after checkout. A new operational test under the repository's existing `scripts/*.test.mjs` test path will load the same helper and cover the configured owner, `uuiodwae`, changed/absent presentation fields, wrong event/label values, and invalid IDs. Tests will use in-memory event fixtures and perform no GitHub API calls.
+The predicate and allowlist will be placed in the dependency-free CommonJS module `.github/test-guard-approval.cjs`, exporting `hasAuthorizedTestChangeApproval`; `test-guard.yml` will call that helper after checkout. A new operational test under the repository's existing `scripts/*.test.mjs` path and a later, independently authored `acceptance/**` test will load the same helper and cover the configured owner, `uuiodwae`, changed/absent presentation fields, wrong event/label values, and invalid IDs. Tests will use in-memory event fixtures and perform no GitHub API calls.
 
-This avoids a source-text assertion that could pass while runtime behavior differs, and avoids duplicating the security predicate in workflow YAML and tests.
+This avoids a source-text-only assertion that could pass while runtime behavior differs, avoids duplicating the security predicate in workflow YAML and tests, and gives the test-writer a contract visible in the delta spec rather than forcing it to read implementation.
 
 ## Risks / Trade-offs
 
@@ -58,7 +59,8 @@ This avoids a source-text assertion that could pass while runtime behavior diffe
 1. Add the protected approval-policy helper and deterministic fixtures for the current owner and PAT bot.
 2. Update `test-guard.yml` to use the shared predicate while leaving diff classification and failure reporting intact.
 3. Run the default test suite and exercise workflow fixtures showing bot rejection and owner acceptance; the proposal PR and implementation PR remain subject to CODEOWNER review.
-4. Roll back by reverting the workflow/helper change together if the required check cannot execute; do not fall back to actor-type-only authorization.
+4. After implementation merges, independently add `acceptance/**` coverage against the documented shared predicate and confirm the acceptance suite passes.
+5. Roll back by reverting the workflow/helper change together if the required check cannot execute; do not fall back to actor-type-only authorization.
 
 ## Open Questions
 

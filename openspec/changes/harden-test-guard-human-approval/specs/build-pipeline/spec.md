@@ -2,7 +2,7 @@
 
 ### Requirement: Test-change exemptions require an explicitly trusted human identity
 
-The `test-guard` required check SHALL grant an `approved-test-change` exemption only for a `labeled` issue event whose actor is a GitHub `User` and whose durable numeric GitHub user ID is present in a source-controlled allowlist of human owners/CODEOWNERS. Authorization MUST be based on the durable user ID, not the actor's display name or login. Missing, malformed, or unlisted actor identities SHALL NOT grant an exemption.
+The `test-guard` required check SHALL grant an `approved-test-change` exemption only for a `labeled` issue event whose actor is a GitHub `User` and whose durable numeric GitHub user ID is present in a source-controlled allowlist of human owners/CODEOWNERS. Authorization MUST be based on the durable user ID, not the actor's display name or login. Missing, malformed, or unlisted actor identities SHALL NOT grant an exemption. The dependency-free CommonJS module `.github/test-guard-approval.cjs` SHALL export this decision as `hasAuthorizedTestChangeApproval`, and the workflow and deterministic tests SHALL invoke that same predicate.
 
 #### Scenario: PAT bot label cannot exempt a protected test change
 
@@ -37,3 +37,10 @@ The `test-guard` required check SHALL grant an `approved-test-change` exemption 
 - **WHEN** the approval predicate evaluates each candidate event
 - **THEN** every candidate produces a non-authorized result
 - **AND** none can make `test-guard` report success for the protected test change
+
+#### Scenario: Workflow and tests share the documented policy entrypoint
+
+- **GIVEN** a repository checkout containing `.github/test-guard-approval.cjs`
+- **WHEN** the workflow and network-free deterministic tests evaluate human-approval events
+- **THEN** both invoke the module's exported `hasAuthorizedTestChangeApproval` predicate
+- **AND** the authorization decision is not duplicated as a separate workflow-only implementation
