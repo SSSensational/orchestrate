@@ -33,7 +33,7 @@ The repository SHALL contain independently authored black-box acceptance tests f
 
 ### Requirement: Independent M3 L2 acceptance coverage
 
-The repository SHALL contain independently authored black-box acceptance tests for the #25 L2 graph-semantic contract. Every test derived from this requirement MUST include `#25` in its full test title. Each failure test MUST validate the identical IR and registry twice, MUST receive deeply equal error lists, and MUST assert a non-empty public error code plus the applicable locator. Tests for an unresolved template, missing agent, or missing capability MUST also assert that the message contains the exact offending value.
+The repository SHALL contain independently authored black-box acceptance tests for the #25 L2 graph-semantic contract. Every test derived from this requirement MUST include `#25` in its full test title. Each failure test MUST validate the identical IR and registry twice, MUST receive deeply equal error lists, and MUST assert a non-empty public error code plus the applicable locator. Tests for an unresolved template, missing agent, or missing capability MUST also assert that the message contains the exact offending value. Error codes MUST identify their failure category: the codes observed for different L2 failure categories MUST be pairwise distinct and repeat-stable, while literal code spellings remain unspecified.
 
 #### Scenario: #25 bundled example and Codex registry pass L2
 
@@ -109,6 +109,16 @@ The repository SHALL contain independently authored black-box acceptance tests f
 - **WHEN** the acceptance test validates the same IR and registry twice with L2
 - **THEN** each run returns an ordered list containing at least the dangling-edge and missing-capability errors
 - **AND** the two complete error lists are deeply equal, including list order and every `node`, `edge`, `code`, and `message` value
+- **AND** the full Vitest test title contains `#25`
+
+#### Scenario: #25 distinct failure categories yield distinct stable codes
+
+- **GIVEN** six otherwise L1-valid IR/registry fixtures, each exhibiting exactly one L2 failure category: duplicate id, dangling edge, unreachable node, unresolved template, missing agent, and missing capability
+- **WHEN** the acceptance test validates each fixture twice with L2
+- **THEN** every category yields at least one error whose `code` is a non-empty string
+- **AND** the codes observed for the six categories are pairwise distinct
+- **AND** each category's observed codes are identical across both runs
+- **AND** no assertion fixes a literal code spelling
 - **AND** the full Vitest test title contains `#25`
 
 ### Requirement: Acceptance-suite runner isolation and pure-test scope
