@@ -5,6 +5,6 @@ set -euo pipefail
 n="${1:?usage: scripts/worktree.sh <issue-number>}"
 dir="../$(basename "$PWD")-issue-${n}"
 git worktree add "$dir" -b "issue/${n}"
-echo "worktree 就绪：$dir（分支 issue/${n}）"
+echo "worktree 就绪：${dir}（分支 issue/${n}）"
 echo "在该目录启动任一本地 agent，例如：cd $dir && codex"
 echo "完成（PR 合并）后清理：git worktree remove $dir"
