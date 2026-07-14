@@ -2,7 +2,7 @@
 
 The M2/M3 runtime behavior is already described by `openspec/changes/single-channel-workflow-slice/specs/workflow-ir/spec.md` and was delivered through GitHub issues [#24](https://github.com/SSSensational/orchestrate/issues/24) and [#25](https://github.com/SSSensational/orchestrate/issues/25). Issue [#44](https://github.com/SSSensational/orchestrate/issues/44) records the evidence gap: no independently authored `acceptance/**` suite exists, so the dedicated command can pass without evaluating workflow-ir.
 
-The relevant test routing already exists in `vitest.config.ts`, `vitest.acceptance.config.ts`, and the root `package.json`: the normal config excludes `acceptance/**`, while the acceptance config includes it. Task 1 supplies tests without changing that configuration; task 2 then wires `pnpm acceptance` into the required `ci` gate and removes the zero-test success path (absorbing issue [#45](https://github.com/SSSensational/orchestrate/issues/45)), so the suite is deterministic evidence rather than an optional command. Issue [#46](https://github.com/SSSensational/orchestrate/issues/46) separately owns known runtime corrections and explicitly requires independent acceptance coverage to remain outside its product-code PR.
+The relevant test routing already exists in `vitest.config.ts`, `vitest.acceptance.config.ts`, and the root `package.json`: the normal config excludes `acceptance/**`, while the acceptance config includes it. The orchestration scripts, however, have no test-writer path: `scripts/dispatch.mjs` forbids builders from touching `acceptance/**` and its local check loop never runs `pnpm acceptance`. Task 1 adds that path; task 2 supplies the tests through it without changing test configuration; task 3 then wires `pnpm acceptance` into the required `ci` gate and removes the zero-test success path (absorbing issue [#45](https://github.com/SSSensational/orchestrate/issues/45)), so the suite is deterministic evidence rather than an optional command. Issue [#46](https://github.com/SSSensational/orchestrate/issues/46) separately owns known runtime corrections and explicitly requires independent acceptance coverage to remain outside its product-code PR.
 
 The source issue and delta specify stable semantic error categories but do not publish literal error-code strings. This proposal therefore does not invent new string values: tests identify the relevant error by its observable failure, exact offending id/reference, and locator. The category-identification property the source contract requires is asserted structurally: codes for different failure categories must be pairwise distinct, and repeated validation of identical input must return identical codes and identically ordered lists.
 
@@ -14,12 +14,13 @@ The source issue and delta specify stable semantic error categories but do not p
 - Preserve test-author independence by deriving cases only from the two source issues and the source delta, never from product implementation or builder tests.
 - Make provenance and runner collection mechanically observable.
 - Make the suite enforced by the required deterministic gates, not just runnable on demand.
-- Keep the test delivery atomic as one added-files-only acceptance PR, with CI wiring in its own follow-up PR.
+- Make the suite deliverable through the pipeline: a test-writer dispatch path whose workspace and check contract match `acceptance/**` ownership.
+- Keep the test delivery atomic as one added-files-only acceptance PR, with the dispatch path and CI wiring each in their own PR.
 
 **Non-Goals:**
 
 - Correct or broaden workflow-ir runtime behavior.
-- Change product source, dependencies, existing tests, docs, or other OpenSpec artifacts; configuration and CI edits are limited to task 2's three build-pipeline files.
+- Change product source, dependencies, existing tests, or other OpenSpec artifacts; script edits are limited to task 1's dispatch path, and configuration/CI edits are limited to task 3's three build-pipeline files.
 - Define new literal public error codes that #24/#25 did not specify.
 
 ## Decisions
@@ -38,15 +39,21 @@ The rejected alternative is one broad “workflow-ir validates” test. It would
 
 ### 3. Verify runner isolation and diff purity without configuration edits in the test PR
 
-The delivered tree must satisfy both existing commands: `pnpm test` collects none of the new paths/titles, and `pnpm acceptance` collects and executes all of them. Task 1's implementation diff is checked independently and must contain only added `acceptance/**` paths.
+The delivered tree must satisfy both existing commands: `pnpm test` collects none of the new paths/titles, and `pnpm acceptance` collects and executes all of them. Task 2's implementation diff is checked independently and must contain only added `acceptance/**` paths.
 
 The rejected alternative is modifying Vitest config inside the test PR to force collection. Current configuration already expresses the required split; changing it there would invalidate the pure-test PR boundary that `test-guard` enforces.
 
 ### 4. Wire the acceptance gate inside this change
 
-Without CI wiring the suite never enters a deterministic gate: the required `ci` runs only `pnpm test` (which excludes `acceptance/**`), and `pnpm acceptance` exits 0 when it collects zero tests. Task 2 therefore absorbs issue #45: remove the zero-test success path and execute the acceptance command in the required `ci` workflow, as a separate PR after the pure-test PR merges so `test-guard`'s ownership rules stay intact.
+Without CI wiring the suite never enters a deterministic gate: the required `ci` runs only `pnpm test` (which excludes `acceptance/**`), and `pnpm acceptance` exits 0 when it collects zero tests. Task 3 therefore absorbs issue #45: remove the zero-test success path and execute the acceptance command in the required `ci` workflow, as a separate PR after the pure-test PR merges so `test-guard`'s ownership rules stay intact.
 
 The rejected alternative is leaving the wiring to standalone issue #45. That sequencing leaves a window in which the evidence exists but nothing enforces it, and this change would not achieve its stated Why.
+
+### 5. Add a test-writer dispatch path before the suite task
+
+`scripts/dispatch.mjs` instructs builders never to create or modify `acceptance/**`, and its local check loop runs typecheck/lint/test but never `pnpm acceptance`, so the suite cannot be delivered through the existing automation without violating ownership rules. Task 1 adds an explicitly selected test-writer role with an inverted workspace contract — only added `acceptance/**` files are allowed — and a local check loop that runs `pnpm typecheck`, `pnpm lint`, and `pnpm acceptance`, reusing the existing worktree, PR, refeed, and advisory-review flow.
+
+The rejected alternative is hand-crafting the suite PR outside the pipeline. That bypasses dispatch's discipline for exactly the artifact whose independence matters most, and leaves nothing reusable for future test-writer issues.
 
 ## Risks / Trade-offs
 
@@ -57,7 +64,7 @@ The rejected alternative is leaving the wiring to standalone issue #45. That seq
 
 ## Migration Plan
 
-Task 1 adds the suite in one pure-test PR; task 2 wires the acceptance gate in a follow-up PR limited to `package.json`, `vitest.acceptance.config.ts`, and `.github/workflows/ci.yml`. Each PR runs `pnpm test` and `pnpm acceptance` and verifies its changed-path set before review. Rollback reverts either PR independently; there is no product or data migration.
+Task 1 wires the test-writer dispatch path in a scripts-only PR; task 2 adds the suite in one pure-test PR; task 3 wires the acceptance gate in a follow-up PR limited to `package.json`, `vitest.acceptance.config.ts`, and `.github/workflows/ci.yml`. Each PR runs `pnpm test` and `pnpm acceptance` and verifies its changed-path set before review. Rollback reverts any PR independently; there is no product or data migration.
 
 ## Open Questions
 

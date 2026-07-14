@@ -55,7 +55,7 @@ The repository SHALL contain independently authored black-box acceptance tests f
 - **GIVEN** an otherwise L1-valid IR with one edge whose target is the non-existent node id `missing-target`
 - **WHEN** the acceptance test validates the identical IR and registry twice with L2
 - **THEN** both runs fail with deeply equal non-empty ordered error lists
-- **AND** at least one error has a non-null `edge`, `node` equal to null, and a non-empty string `code`
+- **AND** at least one error has `node` equal to null, a non-empty string `code`, and an `edge` deeply equal to the offending edge's exact `from`/`to` pair
 - **AND** every returned error object's complete key set is exactly `node`, `edge`, `code`, and `message`
 - **AND** every returned `code` and `message` is a non-empty string
 - **AND** the full Vitest test title contains `#25`
@@ -88,11 +88,11 @@ The repository SHALL contain independently authored black-box acceptance tests f
 
 #### Scenario: #25 missing agent capability is rejected
 
-- **GIVEN** an otherwise L1-valid IR with one node requiring the capability `missing-capability` from its registered agent, whose declared capabilities do not contain that value
+- **GIVEN** an otherwise L1-valid IR with one node requiring the schema-legal capability `fork` from its registered agent, whose declared capabilities set `fork` to false
 - **WHEN** the acceptance test validates the identical IR and registry twice with L2
 - **THEN** both runs fail with deeply equal non-empty ordered error lists
 - **AND** at least one error has `node` equal to that node's id, `edge` equal to null, and a non-empty string `code`
-- **AND** that error's message contains the exact capability `missing-capability`
+- **AND** that error's message contains the exact capability `fork`
 - **AND** the full Vitest test title contains `#25`
 
 #### Scenario: #25 transitive upstream artifact reference resolves
@@ -105,7 +105,7 @@ The repository SHALL contain independently authored black-box acceptance tests f
 
 #### Scenario: #25 repeated L2 validation is deterministic
 
-- **GIVEN** one L1-valid IR whose edge targets the non-existent id `missing-target` and whose reachable node requires `missing-capability` from a registered agent that lacks it, plus one unchanged agent registry
+- **GIVEN** one L1-valid IR whose edge targets the non-existent id `missing-target` and whose reachable node requires the schema-legal capability `fork` from a registered agent that declares `fork` as false, plus one unchanged agent registry
 - **WHEN** the acceptance test validates the same IR and registry twice with L2
 - **THEN** each run returns an ordered list containing at least the dangling-edge and missing-capability errors
 - **AND** the two complete error lists are deeply equal, including list order and every `node`, `edge`, `code`, and `message` value
