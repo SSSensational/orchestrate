@@ -2,9 +2,9 @@
 // 用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder codex] [--reviewer agent] [--label ready] [--once] [--dry-run]
 //
 // 常驻单进程 = 全链入口（决策 D12）。人只碰 GitHub，不敲脚本：
-//   issue 打 ready（无 change:* / agent:build:*）→ 自动 propose.mjs 起草提案 PR —— 人审判据
+//   issue 打 ready（无 change:* / agent:build:* / test-writer 标记）→ 自动 propose.mjs 起草提案 PR —— 人审判据
 //   提案 PR merge → 检测未播种 change → 自动 seed-issues.mjs 播种实现 issues（自带 ready）
-//   issue 打 ready（有 change:* 或 agent:build:*）→ 自动 dispatch.mjs（D10 重试环）
+//   issue 打 ready（有 change:* / agent:build:* / test-writer 标记）→ 自动 dispatch.mjs（D10 重试环）
 //     → 开 PR → 自动 review.mjs 顾问评审 —— 人终审 merge
 // 人保留且仅保留两个动作：审提案判据（定奖励函数）、终审 merge（宪法第 10 条）。
 // 同一 change 的 issue 按编号串行派发；前序 issue 由合并 PR 关闭后才解锁下一个（D6）。
@@ -20,6 +20,7 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { agentFromLabels, agentGhEnv, AGENTS, gh, ghAgent, setAdvisorStatus } from './agents.mjs';
+import { isTestWriterIssue, TEST_WRITER_LABEL } from './dispatch-policy.mjs';
 import { firstOpenIssueNumber } from './watch-order.mjs';
 import { reviewStep } from './review-policy.mjs';
 
@@ -64,9 +65,11 @@ process.on('exit', () => {
 // --- 确保协议 label 存在（幂等）---
 try {
   gh(['label', 'create', LABEL, '--force', '--color', '0e8a16',
-    '--description', '人已判定可开工：无 change/agent:build 走提案，有则直接实现']);
+    '--description', '人已判定可开工：无 change/agent:build/test-writer 标记走提案，有则直接实现']);
   gh(['label', 'create', WIP, '--force', '--color', 'd93f0b',
     '--description', 'watch 已认领、执行中；崩溃遗留由下次启动自动还原为 ready']);
+  gh(['label', 'create', TEST_WRITER_LABEL, '--force', '--color', '0e8a16',
+    '--description', '仅新增 acceptance/** 的独立验收测试作者']);
 } catch { /* 已存在或离线，忽略 */ }
 
 const inflight = new Map(); // issue# -> { child, change }
@@ -264,7 +267,7 @@ function poll() {
     const change = labels.find((n) => n.startsWith('change:'));
     const builderLabel = agentFromLabels(labels, 'build');
     const reviewerLabel = agentFromLabels(labels, 'review');
-    const mode = change || builderLabel ? 'build' : 'propose';
+    const mode = change || builderLabel || isTestWriterIssue(it) ? 'build' : 'propose';
     if (change) {
       if (!openByChange.has(change)) {
         try {
@@ -330,7 +333,7 @@ process.on('SIGINT', () => {
 // --- 主循环 ---
 log(`启动：label=${LABEL} 并发=${MAX} 缺省builder=${BUILDER} 缺省reviewer=${REVIEWER || 'auto-different'} 间隔=${INTERVAL / 1000}s pid=${process.pid}`
   + `${ONCE ? ' --once' : ''}${DRY ? ' --dry-run' : ''}`);
-log(`流程：ready → 提案（无 change/agent:build）或实现（有）；提案 merge → 自动播种；PR 自动顾问评审；merge 由你终审`);
+log(`流程：ready → 提案（无 change/agent:build/test-writer 标记）或实现（有）；提案 merge → 自动播种；PR 自动顾问评审；merge 由你终审`);
 recoverOrphans();
 poll();
 if (DRY) { process.exit(0); }

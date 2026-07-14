@@ -11,6 +11,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { agentGhEnv, gh, ghAgent } from './agents.mjs';
+import { parseTasks } from './seed-issues-parser.mjs';
 
 const [change, milestoneArg, phaseArg, parentArg] = process.argv.slice(2);
 if (!change) {
@@ -34,18 +35,7 @@ if (existsSync(path)) {
   execFileSync('git', ['fetch', '--quiet', 'origin', 'main']);
   md = execFileSync('git', ['show', `origin/main:${path}`], { encoding: 'utf8' });
 }
-const tasks = [];
-let cur = null;
-for (const line of md.split('\n')) {
-  const top = line.match(/^(?:#+\s*\d+[.)]?\s+(.+)|- \[[ x]\] (.+))$/);
-  const sub = line.match(/^\s+- (?:\[[ x]\] )?(.+)/);
-  if (top) {
-    cur = { title: (top[1] || top[2]).trim(), subs: [] };
-    tasks.push(cur);
-  } else if (sub && cur) {
-    cur.subs.push(sub[1].trim());
-  }
-}
+const tasks = parseTasks(md);
 if (tasks.length === 0) {
   console.error(`openspec/changes/${change}/tasks.md 里没有解析到任务`);
   process.exit(1);
@@ -55,7 +45,7 @@ const labels = ['type:feature', 'origin:human', `change:${change}`, 'ready', ...
 execFileSync('gh', ['label', 'create', `change:${change}`, '--force', '--color', '5319e7',
   '--description', `openspec change ${change}`], { stdio: 'inherit' });
 execFileSync('gh', ['label', 'create', 'ready', '--force', '--color', '0e8a16',
-  '--description', '人已判定可开工：无 change/agent:build 走提案，有则直接实现'], { stdio: 'inherit' });
+  '--description', '人已判定可开工：无 change/agent:build/test-writer 标记走提案，有则直接实现'], { stdio: 'inherit' });
 
 for (const t of tasks) {
   const body = [
