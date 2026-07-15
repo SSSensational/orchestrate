@@ -2,7 +2,7 @@
 // 用法：node scripts/watch.mjs [--interval 30] [--max 2] [--builder codex] [--reviewer agent] [--label ready] [--once] [--dry-run]
 //
 // 常驻单进程 = 全链入口（决策 D12）。人只碰 GitHub，不敲脚本：
-//   issue 打 ready（无 change:* / agent:build:* / test-writer 标记）→ 自动 propose.mjs 起草提案 PR —— 人审判据
+//   issue 打 ready（无 change:* / agent:build:* / test-writer 标记）→ 自动 propose.mjs 起草提案 PR → 顾问评审 —— 人审判据
 //   提案 PR merge → 检测未播种 change → 自动 seed-issues.mjs 播种实现 issues（自带 ready）
 //   issue 打 ready（有 change:* / agent:build:* / test-writer 标记）→ 自动 dispatch.mjs（D10 重试环）
 //     → 开 PR → 自动 review.mjs 顾问评审 —— 人终审 merge
@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path';
 import { agentFromLabels, agentGhEnv, AGENTS, gh, ghAgent, setAdvisorStatus } from './agents.mjs';
 import { isTestWriterIssue, TEST_WRITER_LABEL } from './dispatch-policy.mjs';
 import { firstOpenIssueNumber } from './watch-order.mjs';
-import { reviewStep } from './review-policy.mjs';
+import { reviewStep, selectReviewer } from './review-policy.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const WIP = 'wip';
@@ -238,12 +238,46 @@ function startReview(num, builder, reviewerLabel, change, revisionRound) {
   log(`#${num} → PR #${pr.number}，自动顾问评审中`);
 }
 
-// --- propose：起草提案 PR，之后等人审 ---
-function startPropose(num) {
-  const child = runScript(num, 'propose.mjs', [String(num), BUILDER], (code) => {
+// --- propose：起草提案 PR → 自动顾问评审（不复修提案），之后等人审 ---
+function startProposalReview(num, reviewerLabel) {
+  let pr = null;
+  try {
+    pr = JSON.parse(gh(['pr', 'list', '--head', `propose/${num}`, '--state', 'open',
+      '--json', 'number', '--limit', '1']))[0];
+  } catch { /* ignore */ }
+  if (!pr) {
     inflight.delete(num);
-    if (code === 0) { clearWip(num); log(`✓ #${num} 提案 PR 已开——审判据 + merge 后自动播种实现 issues`); }
-    else { log(`✗ #${num} 提案失败（退出码 ${code}）—— 打 needs-human`); flagHuman(num); }
+    clearWip(num);
+    log(`⚠ #${num} propose 成功但未找到 open PR——请自查`);
+    maybeExit();
+    return;
+  }
+  const reviewer = selectReviewer({ override: REVIEWER, labeled: reviewerLabel, builtBy: BUILDER, agents: AGENTS });
+  const child = runScript(num, 'review.mjs', [String(pr.number), reviewer], (code) => {
+    const step = reviewStep(code, 1); // proposal 不自动改写；CHANGES 直接交人终审
+    inflight.delete(num);
+    clearWip(num);
+    if (step === 'pass') log(`✓ #${num} → proposal PR #${pr.number} 顾问 PASS——等你审判据`);
+    else if (step === 'changes') {
+      log(`✓ #${num} → proposal PR #${pr.number} 顾问 CHANGES——不自动改写，交你审判据`);
+      prNote(pr.number, '提案顾问评审为 CHANGES——自动循环已停止（proposal 不自动改写），等待人审判据。');
+    } else {
+      log(`✓ #${num} → proposal PR #${pr.number} 已开；⚠ 顾问评审失败（退出码 ${code}），顾问非门禁`);
+      try { setAdvisorStatus(pr.number, 'success', `顾问评审运行失败（退出码 ${code}）——顾问非门禁，自动放行`); } catch { /* fail-open */ }
+      prNote(pr.number, `顾问评审运行失败（退出码 ${code}）——advisor-review 已自动放行，本 PR 照常等待其余 required checks 与人审判据。`);
+    }
+    maybeExit();
+  });
+  inflight.set(num, { child, change: null });
+  log(`#${num} → proposal PR #${pr.number}，自动顾问评审中（${reviewer}）`);
+}
+
+function startPropose(num, reviewerLabel) {
+  const child = runScript(num, 'propose.mjs', [String(num), BUILDER], (code) => {
+    if (code === 0) return startProposalReview(num, reviewerLabel);
+    inflight.delete(num);
+    log(`✗ #${num} 提案失败（退出码 ${code}）—— 打 needs-human`);
+    flagHuman(num);
     maybeExit();
   });
   inflight.set(num, { child, change: null });
@@ -312,7 +346,7 @@ function poll() {
     }
     claim(it.number); // 认领：起跑前摘 label，避免并发双开 / 下一轮重复捡
     if (mode === 'build') startBuild(it.number, builderLabel, reviewerLabel, change);
-    else startPropose(it.number);
+    else startPropose(it.number, reviewerLabel);
   }
 }
 

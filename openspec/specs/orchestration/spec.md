@@ -43,3 +43,30 @@ The issue seeder SHALL create exactly one issue per numbered top-level task in a
 - **THEN** the parsed task count equals the number of numbered headings
 - **AND** every indented checklist item is attributed to its enclosing task
 - **AND** no blockquote line appears in any parsed task title or criteria
+
+### Requirement: Proposal pull requests receive advisory review
+
+After the proposer creates a proposal pull request, the watch process SHALL run `review.mjs` in the same concurrency slot before releasing the source issue claim. Unless a reviewer is explicitly selected, the reviewer SHALL differ from the proposer. PASS, CHANGES, and reviewer failure SHALL all be terminal for the proposal: the watch process MUST clear `wip`, release the slot, and MUST NOT revise the proposal automatically. Reviewer failure SHALL retain the existing fail-open advisor status and human handoff behavior. Implementation pull requests SHALL retain their existing single revision and re-review allowance.
+
+#### Scenario: Successful proposal creation starts advisory review
+
+- **GIVEN** a ready source issue whose proposer successfully opens a proposal pull request
+- **WHEN** the proposer process exits successfully
+- **THEN** watch invokes `review.mjs` for that proposal pull request
+- **AND** the proposal remains claimed until the reviewer exits
+
+#### Scenario: Proposal reviewer selection preserves independence and overrides
+
+- **GIVEN** a proposal created by one configured agent
+- **WHEN** no reviewer is explicitly selected
+- **THEN** watch selects the first configured reviewer different from the proposer
+- **AND** an explicit `--reviewer` selection takes precedence when present
+
+#### Scenario: Proposal review outcomes do not trigger automatic revision
+
+- **GIVEN** a proposal advisory review that returns PASS, CHANGES, or a failure exit
+- **WHEN** watch handles the reviewer exit
+- **THEN** watch clears `wip` and releases the concurrency slot
+- **AND** watch does not dispatch a proposal revision
+- **AND** reviewer failure leaves `advisor-review` fail-open with a human handoff
+- **AND** the implementation pull-request review path retains its existing one-revision limit
