@@ -24,6 +24,25 @@ The system SHALL define a strict zod schema and inferred TypeScript types for `a
 - **THEN** validation fails
 - **AND** at least one returned error has a non-empty code and message and locates that node
 
+### Requirement: Workflow identifier grammar
+
+Every node `id`, edge `from` and `to`, and output-artifact name SHALL match `^[A-Za-z0-9_-]+$`. The node-id and artifact-name segments in `{{nodes.<id>.artifacts.<name>}}` SHALL use the same grammar.
+
+#### Scenario: Allowed identifiers pass both validation layers
+
+- **GIVEN** a producer id `producer_v2`, a consumer id `consumer-2`, and an output artifact `report-v1`
+- **AND** the consumer references `{{nodes.producer_v2.artifacts.report-v1}}` across an edge from the producer
+- **WHEN** L1 and then L2 validation run
+- **THEN** both layers succeed with zero errors
+
+#### Scenario: Dotted declarations fail L1 with their locator
+
+- **GIVEN** otherwise valid IR values with a dotted node id, edge endpoint, or output-artifact name
+- **WHEN** L1 validation runs
+- **THEN** every dotted identifier is rejected
+- **AND** a node or artifact error locates its declaring node
+- **AND** an endpoint error locates its exact edge
+
 ### Requirement: Graph-semantic validation (L2)
 
 The system SHALL validate Phase 1 graph semantics after L1 succeeds: node ids are unique; every edge endpoint references an existing node; every node is reachable from a root; template references of the form `{{nodes.<id>.artifacts.<name>}}` resolve to a transitively upstream node's declared `output_artifacts`; and every referenced agent exists with capabilities satisfying the node requirements.
@@ -70,6 +89,64 @@ The system SHALL validate Phase 1 graph semantics after L1 succeeds: node ids ar
 - **WHEN** L2 graph-semantic validation runs
 - **THEN** validation fails
 - **AND** at least one error locates that node and identifies the missing capability
+
+### Requirement: Agent registry membership uses own properties
+
+L2 SHALL treat an agent id as registered only when the supplied registry has an own property for that exact id. An inherited property MUST NOT satisfy registration, while an own property whose value supplies the required capabilities SHALL remain valid even when its name collides with an object-prototype property.
+
+#### Scenario: Inherited registry entry is rejected
+
+- **GIVEN** an otherwise valid node whose agent id exists only on the registry's custom prototype
+- **WHEN** L2 validation runs
+- **THEN** validation fails with an unregistered-agent error located to that node
+
+#### Scenario: Own prototype-colliding entry is accepted
+
+- **GIVEN** an otherwise valid node whose agent id is `toString`
+- **AND** the registry has its own `toString` property containing satisfying capabilities
+- **WHEN** L2 validation runs
+- **THEN** validation succeeds with zero errors
+
+### Requirement: Node-artifact template candidates have strict syntax
+
+L2 SHALL inspect every literal `{{nodes.` occurrence in prompt order. Each candidate MUST terminate at the next `}}` and exactly match `{{nodes.<id>.artifacts.<name>}}` using the workflow identifier grammar. A malformed or unterminated candidate SHALL produce a distinct syntax-category error located to the referencing node and containing the exact candidate; a well-formed candidate SHALL continue through transitive-upstream artifact resolution.
+
+#### Scenario: Dotted template segment fails syntax validation
+
+- **GIVEN** an L1-valid IR whose consumer prompt contains a dotted node-id or artifact-name segment in a node-artifact candidate
+- **WHEN** L2 validation runs
+- **THEN** validation fails with a syntax-category error located to the consumer
+- **AND** the error message contains the exact malformed candidate
+
+#### Scenario: Unterminated template candidate fails syntax validation
+
+- **GIVEN** an L1-valid IR whose consumer prompt ends with `{{nodes.producer.artifacts.report`
+- **WHEN** L2 validation runs
+- **THEN** validation fails with a syntax-category error located to the consumer
+- **AND** the error message contains the exact unterminated candidate
+
+### Requirement: Phase 1 workflows are acyclic
+
+Every Phase 1 workflow graph SHALL be acyclic. L2 MUST reject a cycle reachable from a root with a cycle-category error located to the deterministic back edge selected by node and edge declaration order. A cycle whose members are all unreachable from every root SHALL continue to fail only through the existing node-located unreachable diagnostics.
+
+#### Scenario: Root-reachable cycle is rejected
+
+- **GIVEN** nodes `root`, `a`, and `b` with edges `root -> a`, `a -> b`, and `b -> a`
+- **WHEN** L2 validation runs
+- **THEN** validation fails with a cycle-category error located to edge `b -> a`
+
+#### Scenario: Root-reachable self-loop is rejected
+
+- **GIVEN** a reachable node `a` with an edge `a -> a`
+- **WHEN** L2 validation runs
+- **THEN** validation fails with a cycle-category error located to edge `a -> a`
+
+#### Scenario: Disconnected cycle retains unreachable diagnostics
+
+- **GIVEN** a valid root plus a disconnected node `orphan` with an edge `orphan -> orphan`
+- **WHEN** L2 validation runs
+- **THEN** validation fails with the existing unreachable error located to `orphan`
+- **AND** no cycle-category error is returned for the disconnected self-loop
 
 ### Requirement: Structured validation errors
 
