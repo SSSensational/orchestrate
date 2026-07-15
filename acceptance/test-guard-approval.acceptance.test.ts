@@ -25,7 +25,7 @@ const approvalEvent = (actor: IssueEvent['actor']): IssueEvent => ({
   actor,
 });
 
-describe('test-guard human approval', () => {
+describe('#47 test-guard human approval', () => {
   it('rejects a PAT bot label on a protected test change', () => {
     const events = [
       approvalEvent({ id: 112002218, type: 'User', login: 'uuiodwae' }),
