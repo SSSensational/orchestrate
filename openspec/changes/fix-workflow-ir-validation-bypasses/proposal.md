@@ -7,7 +7,7 @@ GitHub issue [#46](https://github.com/SSSensational/orchestrate/issues/46) recor
 - Treat an agent as registered only when its id is an own property of the supplied registry.
 - **BREAKING**: Define one explicit identifier grammar for node ids, edge endpoints, output-artifact names, and both identifier positions in `{{nodes.<id>.artifacts.<name>}}`; reject previously accepted identifiers outside that grammar at L1 and malformed node-artifact template candidates at L2.
 - Reject every directed cycle in the Phase 1 `agent.run` graph. Add a deterministic, edge-located cycle diagnostic where a reachable cycle would otherwise pass, while preserving existing diagnostics for already-invalid unreachable cycles.
-- Add independently authored `#46` acceptance coverage in a test-writer issue/PR before implementation, then add builder-owned unit coverage in a new test file without modifying existing tests or `acceptance/**`.
+- Add builder-owned unit coverage in a new test file without modifying existing tests or `acceptance/**`, then add independently authored `#46` acceptance coverage in a test-writer issue/PR whose prompt remains limited to the issue criteria and delta spec.
 - Add a `workflow-ir` delta spec for the hardened contracts and preserve the existing #24/#25 public error shape, failure categories, and deterministic ordering.
 
 ## Capabilities
@@ -23,7 +23,7 @@ None.
 ## Impact
 
 - Affected product implementation: `shared/src/workflow-ir.ts`.
-- Affected verification: one new builder unit-test file under `shared/`, plus an earlier independent test-writer PR that only adds `acceptance/**` coverage.
+- Affected verification: one new builder unit-test file under `shared/`, plus a subsequent independent test-writer PR that only adds `acceptance/**` coverage.
 - Affected specification: this change's `specs/workflow-ir/spec.md`, later synced to the `workflow-ir` living spec through the repository archive workflow.
 - No new runtime dependency, public error field, node type, or agent capability is introduced.
 
@@ -33,7 +33,7 @@ None.
 - [ ] Node ids, edge endpoints, output-artifact names, and template node/artifact segments obey the same documented identifier grammar; valid references are resolved, invalid schema identifiers fail L1, and malformed node-artifact template candidates fail L2 with the referencing node and exact candidate in the diagnostic.
 - [ ] A root-reachable cycle such as `root -> a -> b -> a` fails with a repeat-stable, edge-located cycle diagnostic; every other Phase 1 directed-cycle shape also fails validation.
 - [ ] The bundled example and all existing #24/#25 tests retain their current results; repeated validation returns deeply equal errors in the same order and every error keeps exactly `node`, `edge`, `code`, and `message`.
-- [ ] New `#46` black-box acceptance tests are authored first in a separate test-writer issue/PR, and the builder implementation adds only new unit tests without modifying existing tests or `acceptance/**`.
+- [ ] The builder implementation adds only new unit tests without modifying existing tests or `acceptance/**`; after it merges, a separate test-writer issue/PR adds `#46` black-box acceptance tests without reading the implementation.
 - [ ] The delta spec contains deterministic GIVEN/WHEN/THEN scenarios for all three bypasses and passes strict OpenSpec validation.
 
 ## Non-goals

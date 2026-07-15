@@ -8,6 +8,8 @@ Issue [#46](https://github.com/SSSensational/orchestrate/issues/46) was reproduc
 
 The existing `workflow-ir` living spec requires L1-before-L2, transitive upstream template resolution, exact structured-error fields, and deterministic ordering ([living spec](../../specs/workflow-ir/spec.md)). Existing #24/#25 tests are compatibility constraints. In particular, one builder fixture contains a disconnected self-loop and asserts the exact existing sequence `duplicate -> dangling -> unreachable -> unresolved-template -> missing-capability` ([unit fixture](../../../shared/workflow-ir-l2.test.ts#L25-L63)); existing tests cannot be edited by this change.
 
+The repository dispatches issues for one change strictly in issue-number order and does not unlock the next issue until the prior one closes ([watch ordering](../../../scripts/watch.mjs#L271-L289)). A test-writer run must also pass `pnpm acceptance` before it can open a PR ([test-writer checks](../../../scripts/dispatch-policy.mjs#L60-L62), [dispatch loop](../../../scripts/dispatch.mjs#L87-L132)). Because the new black-box cases expose current bugs, placing test-writer first would deadlock the change before the builder can run. The builder therefore lands first; test independence is preserved by the dispatcher, which supplies only issue criteria and delta specs and forbids reading implementation or builder tests.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -16,7 +18,7 @@ The existing `workflow-ir` living spec requires L1-before-L2, transitive upstrea
 - Make identifier and template syntax mechanically decidable without adding a template dependency.
 - Make every Phase 1 directed cycle invalid and give newly rejected reachable cycles a stable edge locator.
 - Preserve existing #24/#25 results, error shape, and ordering while adding deterministic new categories.
-- Keep acceptance authorship separate and make the test-writer PR precede builder implementation.
+- Keep acceptance authorship separate while ordering the test-writer after the builder so both automated runs can satisfy their required local checks.
 
 **Non-Goals:**
 
@@ -53,7 +55,7 @@ Kahn-only detection was rejected because leftover nodes do not identify a specif
 
 The existing order remains duplicate ids, dangling endpoints, unreachable nodes, template diagnostics, and registry/capability diagnostics. Reachable-cycle errors are inserted after reachability diagnostics and before template diagnostics; template candidates remain node order then prompt order. Existing fixtures that contain no newly rejected reachable cycle or malformed candidate therefore return byte-for-byte equal error lists.
 
-The test-writer task will first add black-box `#46` cases under `acceptance/**` from the delta spec. The later builder task will modify `shared/src/workflow-ir.ts` and add a new unit-test file under `shared/`; it will not modify any existing test or acceptance file.
+The builder task will modify `shared/src/workflow-ir.ts` and add a new unit-test file under `shared/`; it will not modify any existing test or acceptance file. After that PR merges, the test-writer task will add black-box `#46` cases under `acceptance/**` using only the issue criteria and delta spec supplied by the dispatcher.
 
 ## Risks / Trade-offs
 
@@ -64,8 +66,8 @@ The test-writer task will first add black-box `#46` cases under `acceptance/**` 
 
 ## Migration Plan
 
-1. Land the independent test-writer issue/PR containing only new `acceptance/**` tests derived from this delta.
-2. Land the builder issue/PR with the shared validator changes and a new builder unit-test file; run the existing #24/#25 suites unchanged.
+1. Land the builder issue/PR with the shared validator changes and a new builder unit-test file; run the existing #24/#25 suites unchanged.
+2. Land the independent test-writer issue/PR containing only new `acceptance/**` tests derived from this delta, without reading product implementation or builder tests.
 3. After all change issues close, use the repository's archive workflow to sync this delta into the `workflow-ir` living spec.
 
 No persisted data migration or runtime rollout step is required. Reverting the validator change also reverts its new unit tests; the independently landed acceptance tests remain as visible evidence that the bypass has returned.

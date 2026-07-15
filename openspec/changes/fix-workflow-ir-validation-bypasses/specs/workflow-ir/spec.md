@@ -126,17 +126,17 @@ The new identifier, template-syntax, registry-membership, and reachable-cycle di
 - **AND** every `code` and `message` is a non-empty string
 - **AND** the cycle, malformed-template, and unregistered-agent failures have pairwise distinct category codes
 
-### Requirement: Independent #46 acceptance coverage precedes implementation
+### Requirement: Independent #46 acceptance coverage follows implementation
 
-Black-box acceptance tests for this change SHALL be authored from issue #46 and this delta spec in a dedicated test-writer issue/PR before the builder implementation begins. Every new test derived from this delta MUST include `#46` in its full title. The test-writer PR MUST only add files below `acceptance/**` and MUST NOT inspect or change product implementation or builder unit tests. The later builder PR MUST NOT create, modify, or delete any `acceptance/**` file or modify an existing test.
+The builder PR MUST NOT create, modify, or delete any `acceptance/**` file or modify an existing test. After the builder PR merges, black-box acceptance tests for this change SHALL be authored from issue #46 and this delta spec in a dedicated test-writer issue/PR. Every new test derived from this delta MUST include `#46` in its full title. The test-writer PR MUST only add files below `acceptance/**` and MUST NOT inspect or change product implementation or builder unit tests.
 
-#### Scenario: #46 Test-writer change is an earlier pure acceptance addition
+#### Scenario: #46 Test-writer change is a later pure acceptance addition
 
 - **GIVEN** the test-writer branch for this change is compared with its base and its PR history is inspected
 - **WHEN** changed paths, change statuses, and merge order are evaluated
 - **THEN** every changed path is a newly added file below `acceptance/**`
 - **AND** every new full test title contains `#46`
-- **AND** the test-writer PR precedes the builder implementation PR
+- **AND** the builder implementation PR is merged before the test-writer run begins
 
 #### Scenario: #46 Acceptance runner isolation remains enforced
 
@@ -148,7 +148,7 @@ Black-box acceptance tests for this change SHALL be authored from issue #46 and 
 
 #### Scenario: #46 Builder test diff respects ownership
 
-- **GIVEN** the later builder implementation branch is compared with its base
+- **GIVEN** the builder implementation branch is compared with its base
 - **WHEN** its changed test paths and statuses are inspected
 - **THEN** it adds builder-owned unit coverage in a new file under `shared/`
 - **AND** it does not modify or delete any existing test
