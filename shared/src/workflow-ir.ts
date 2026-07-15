@@ -30,18 +30,20 @@ export const agentCapabilitiesSchema = z.strictObject({
   interactivePermission: z.boolean(),
 });
 
+const workflowIdentifierSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
+
 export const workflowNodeSchema = z.strictObject({
-  id: z.string().min(1),
+  id: workflowIdentifierSchema,
   type: z.literal('agent.run'),
   agent: z.string().min(1),
   prompt: z.string().min(1),
-  output_artifacts: z.array(z.string().min(1)),
+  output_artifacts: z.array(workflowIdentifierSchema),
   required_capabilities: z.array(agentCapabilitySchema).optional(),
 });
 
 export const workflowEdgeSchema = z.strictObject({
-  from: z.string().min(1),
-  to: z.string().min(1),
+  from: workflowIdentifierSchema,
+  to: workflowIdentifierSchema,
   when: z.string().min(1).optional(),
 });
 
@@ -147,8 +149,9 @@ export function validateWorkflowIrL1(input: unknown): L1ValidationResult {
   };
 }
 
+const artifactReferencePrefix = '{{nodes.';
 const artifactReferencePattern =
-  /{{nodes\.([^{}.]+)\.artifacts\.([^{}.]+)}}/g;
+  /^{{nodes\.([A-Za-z0-9_-]+)\.artifacts\.([A-Za-z0-9_-]+)}}$/;
 
 function nodeError(
   node: string,
@@ -241,11 +244,59 @@ export function validateWorkflowIrL2<Ir extends WorkflowIrL2Input>(
     }
   }
 
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  function visit(from: string): void {
+    visiting.add(from);
+
+    for (const to of outgoing.get(from) ?? []) {
+      if (visiting.has(to)) {
+        errors.push({
+          node: null,
+          edge: { from, to },
+          code: 'l2.directed_cycle',
+          message: `Edge "${from}" -> "${to}" closes a directed cycle, which is not supported in Phase 1.`,
+        });
+      } else if (!visited.has(to)) {
+        visit(to);
+      }
+    }
+
+    visiting.delete(from);
+    visited.add(from);
+  }
+
+  for (const node of ir.nodes) {
+    if (reachable.has(node.id) && !visited.has(node.id)) visit(node.id);
+  }
+
   for (const node of ir.nodes) {
     const upstream = upstreamNodeIds(node.id, incoming);
 
-    for (const match of node.prompt.matchAll(artifactReferencePattern)) {
-      const reference = match[0];
+    for (
+      let start = node.prompt.indexOf(artifactReferencePrefix);
+      start !== -1;
+      start = node.prompt.indexOf(
+        artifactReferencePrefix,
+        start + artifactReferencePrefix.length,
+      )
+    ) {
+      const end = node.prompt.indexOf('}}', start);
+      const reference = node.prompt.slice(start, end === -1 ? undefined : end + 2);
+      const match = artifactReferencePattern.exec(reference);
+
+      if (!match) {
+        errors.push(
+          nodeError(
+            node.id,
+            'l2.invalid_template_syntax',
+            `Node "${node.id}" contains invalid template reference syntax "${reference}".`,
+          ),
+        );
+        continue;
+      }
+
       const producerId = match[1]!;
       const artifact = match[2]!;
       const producer = nodesById.get(producerId);
@@ -267,8 +318,7 @@ export function validateWorkflowIrL2<Ir extends WorkflowIrL2Input>(
   }
 
   for (const node of ir.nodes) {
-    const capabilities = registry[node.agent];
-    if (!capabilities) {
+    if (!Object.hasOwn(registry, node.agent)) {
       errors.push(
         nodeError(
           node.id,
@@ -278,6 +328,8 @@ export function validateWorkflowIrL2<Ir extends WorkflowIrL2Input>(
       );
       continue;
     }
+
+    const capabilities = registry[node.agent]!;
 
     for (const capability of node.required_capabilities ?? []) {
       if (!capabilities[capability]) {
